@@ -1,140 +1,140 @@
-M5-IMUtracker (M5Stick Accelerometer/Gyro Logger)
-=================================================
+M5-IMUtracker（M5Stick 加速度・ジャイロロガー） / English Follows
+=================================================================
 
-A simple firmware + PC tools set to record IMU data on M5Stick devices and dump it to your computer as a binary and CSV file.
+概要（日本語）
+--------------
 
-- Firmware logs IMU samples to the device’s filesystem with a compact 64‑byte header followed by raw samples.
-- PC tools (GUI/CLI) download `ACCLOG.bin` over serial and optionally convert it to CSV.
-- Latest firmware logs both accelerometer and gyroscope. Older logs (accel‑only) are still supported.
+M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC にバイナリ／CSVとして吸い出すためのファームウェア＋PCツールのセットです。
 
-Features
---------
+- ファームウェアは64バイトのヘッダ＋生データのシンプルなログ形式で `/ACCLOG.BIN` に記録します。
+- PCツール（GUI/CLI）はシリアル経由で `ACCLOG.bin` をダウンロードし、必要に応じてCSVへ変換します。
+- 新ファーム（v2）は加速度＋ジャイロを同時記録。旧ログ（加速度のみ v1）も自動判別して対応します。
 
-- Button‑controlled recording on the M5Stick
-- Fixed ODR and ranges configured in `config.h`
-- Robust serial dump (handles stray preambles, tolerates timing)
-- Decoder auto‑detects log format (v1 accel‑only, v2 accel+gyro)
-- CSV output ready for analysis in Python, Excel, etc.
+特長
+----
 
-Hardware
---------
+- M5Stick本体のボタン操作で記録開始／停止
+- 取得レートやレンジは `config.h` で設定
+- シリアルDUMPはプリアンブル混入やタイミング差にロバスト
+- デコーダはログ形式（v1/v2）を自動判別しCSV出力
 
-- M5StickC / M5StickC Plus family (SH200Q IMU via M5.IMU)
+対応ハードウェア
+----------------
 
-Repository Layout
------------------
+- M5StickC / M5StickC Plus 系（SH200Q IMU, M5.IMU 経由）
 
-- `firmware_m5_multi_acc_logger/` — Arduino firmware for M5Stick devices
-- `pc_tools/` — PC‑side tools (GUI/CLI/decoder)
-- `docs/` — additional documentation (if any)
+リポジトリ構成
+--------------
 
-Firmware
---------
+- `firmware_m5_multi_acc_logger/` — M5Stick 向け Arduino ファームウェア
+- `pc_tools/` — PC側ツール（GUI/CLI/decoder）
+- `docs/` — 追加ドキュメント（任意）
 
-1. Open `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` in Arduino IDE.
-2. Select your board (e.g., M5StickC/M5StickC Plus) and a suitable partition scheme.
-3. Build and upload.
-4. Recording:
-   - Press Button A to start/stop logging.
-   - A binary file `/ACCLOG.BIN` is written in the device filesystem.
+ファームウェア（使い方）
+----------------------
 
-Configuration (edit in `config.h`):
-- `ODR_HZ` — sampling rate (e.g., 200 Hz)
-- `RANGE_G` — accelerometer full scale (2/4/8/16 g)
-- `GYRO_RANGE_DPS` — gyroscope full scale (250/500/1000/2000 dps)
-- `SERIAL_BAUD` — serial speed for dump/commands (default 115200)
+1. Arduino IDE で `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` を開く
+2. ボード（M5StickC / M5StickC Plus など）とパーティションを選択
+3. ビルドして書き込み
+4. 記録操作：
+   - 本体ボタンAで開始／停止
+   - デバイス内に `/ACCLOG.BIN` が生成されます
 
-Serial protocol (for tooling):
+設定（`config.h`）
+- `ODR_HZ` サンプリングレート（例: 200 Hz）
+- `RANGE_G` 加速度レンジ（2/4/8/16 g）
+- `GYRO_RANGE_DPS` ジャイロレンジ（250/500/1000/2000 dps）
+- `SERIAL_BAUD` シリアル速度（既定 115200）
+
+シリアルプロトコル（抜粋）
 - `PING` → `PONG`\n
-- `INFO` → one‑line JSON (ODR, ranges, file size)
-- `DUMP` → `OK <filesize>` then raw file bytes, finally `\nDONE\n`
-- `ERASE` → deletes `/ACCLOG.BIN`
-- `START` / `STOP` → start/stop logging
+- `INFO` → 1行JSON（ODR/レンジ/ファイルサイズ）
+- `DUMP` → `OK <filesize>` の後に生データ、本体は最後に `\nDONE\n`
+- `ERASE` → `/ACCLOG.BIN` 削除
+- `START` / `STOP` → 記録開始／停止
 
-Data Format
------------
+データ形式
+----------
 
-Header (64 bytes, little‑endian):
-- magic[8]: `"ACCLOG\0\0"` (older v1 may be `"ACCLOG\0"`)
-- format_ver: uint16 (v1: 0x0100 accel‑only, v2+: 0x0200 accel+gyro)
+ヘッダ（64バイト, little-endian）
+- magic[8]: `"ACCLOG\0\0"`（古いv1では `"ACCLOG\0"`）
+- format_ver: uint16（v1: 0x0100 加速度のみ, v2+: 0x0200 加速度+ジャイロ）
 - device_uid: uint64
-- start_unix_ms: uint64 (optional)
+- start_unix_ms: uint64（任意）
 - odr_hz: uint16
 - range_g: uint16
-- v2+: gyro_range_dps: uint16 (stored where v1 had reserved)
-- total_samples: uint32 (0xFFFFFFFF while recording)
+- v2+: gyro_range_dps: uint16（v1のreserved領域を再利用）
+- total_samples: uint32（記録中は 0xFFFFFFFF）
 - dropped_samples: uint32
-- reserved: zero‑padded to 64 bytes total
+- reserved: 64バイトにゼロ詰め
 
-Payload:
-- v1: repeating `[ax i16][ay i16][az i16]` (big‑endian words, MSB first)
-- v2+: repeating `[ax][ay][az][gx][gy][gz]` (each int16 big‑endian)
+ペイロード（MSB first の int16 配列）
+- v1: `[ax][ay][az]` の繰り返し
+- v2+: `[ax][ay][az][gx][gy][gz]` の繰り返し
 
-CSV columns:
+CSV列
 - v1: `n, t_sec, ax_g, ay_g, az_g`
 - v2+: `n, t_sec, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps`
 
-PC Tools
---------
+PCツール
+-------
 
-Requirements (Python 3.10+ recommended):
+要件（Python 3.10+ 推奨）：
 
 ```
 python -m pip install -r pc_tools/requirements.txt
 ```
 
-GUI (Tkinter)
--------------
+GUI（Tkinter）
 
 ```
 python pc_tools/AccDumpGUI.py
 ```
 
-- Select your serial port and click DUMP.
-- Check “CSVへ変換” to automatically generate a CSV next to `ACCLOG.bin`.
+- シリアルポートを選択して DUMP をクリック
+- 「CSVへ変換」にチェックで、`ACCLOG.bin` と同じ場所にCSVを自動生成
 
 CLI
----
 
-Dump from a specific port and convert to CSV:
+特定ポートからDUMPしてCSVへ変換：
 
 ```
 python pc_tools/accdump_cli.py --port /dev/ttyUSB0 --out logs/ --csv
 ```
 
-Dump from all available ports:
+利用可能な全ポートからDUMP：
 
 ```
 python pc_tools/accdump_cli.py --all --out logs/
 ```
 
-Convert an existing log file to CSV:
+既存のログをCSVへ変換：
 
 ```
 python pc_tools/decoder.py logs/ACCLOG.bin --csv
 ```
 
-Troubleshooting
----------------
+トラブルシューティング
+--------------------
 
-- Device busy (`could not open port …: Device or resource busy`):
-  - Close other serial monitors (Arduino Serial Monitor, screen/minicom/picocom, VS Code extensions).
-  - On Linux, stop ModemManager if it probes ports: `sudo systemctl stop ModemManager`
-  - Ensure your user is in `dialout` group; re‑login after adding.
-- Timeout waiting for header / partial dumps:
-  - The PC tool searches for the `ACCLOG` header and can fall back to raw copy.
-  - If the header is not at the very start due to device preambles, the decoder scans for it.
-  - If issues persist, power‑cycle the device and try again.
-- CSV conversion errors (invalid magic):
-  - Re‑dump with the latest firmware and tools.
-  - Share the `.bin` size and the first 64 bytes (hex) if you need help.
-- Slow/unstable link:
-  - Tools use a 10‑second serial timeout and read in 4 KB chunks; re‑try if transient errors occur.
+- デバイスが使用中（`Device or resource busy`）
+  - 他のシリアルモニタ（Arduino Serial Monitor / screen / minicom / VS Code拡張など）を終了
+  - Linuxでは ModemManager がポートを触る場合があります：`sudo systemctl stop ModemManager`
+  - `dialout` グループ所属を確認し、追加後は再ログイン
+- ヘッダ待ちタイムアウト／途中で止まる
+  - PC側は `ACCLOG` を探索し、見つからない場合はロウコピーにフォールバック
+  - 先頭にプリアンブルがある場合でも decoder が自動でヘッダ位置へ同期
+  - 解決しない場合はデバイスの電源再投入、再試行
+- CSV変換エラー（invalid magic など）
+  - 最新のファーム／ツールで再DUMP
+  - `.bin`サイズと先頭64バイトのhexを共有いただければ解析可能
+- 通信が不安定／遅い
+  - ツールは10秒のシリアルタイムアウトと4KBチャンクで受信。再試行推奨
 
-Building Stand‑alone Binaries (Optional)
----------------------------------------
+スタンドアロンビルド（任意）
+----------------------------
 
-Install PyInstaller and build:
+PyInstaller で配布用バイナリを作成：
 
 ```
 python -m pip install -r pc_tools/requirements.txt pyinstaller
@@ -142,11 +142,122 @@ pyinstaller --onefile --windowed pc_tools/AccDumpGUI.py
 pyinstaller --onefile pc_tools/accdump_cli.py
 ```
 
-Artifacts are created under `dist/`.
+`dist/` に成果物が生成されます。
+
+注意事項
+------
+
+- 新ファーム（format 0x0200）はジャイロを追加。decoder は v1 と後方互換
+- ファームは MSB first で int16 を書き込み、decoder は big-endian として解釈します
+
+
+English (Summary)
+=================
+
+Overview
+--------
+
+Firmware + PC tools to log IMU (accelerometer/gyroscope) on M5Stick devices and dump as binary/CSV to your computer.
+
+- Firmware stores `/ACCLOG.BIN` with a 64‑byte header followed by raw samples.
+- PC tools (GUI/CLI) download `ACCLOG.bin` over serial and optionally convert to CSV.
+- Latest firmware (v2) logs accel+gyro; older accel‑only logs (v1) are supported.
+
+Features
+--------
+
+- Button‑controlled recording on device
+- Configurable ODR/ranges in `config.h`
+- Robust serial dump (handles preambles/timing)
+- Decoder auto‑detects format (v1 accel‑only, v2 accel+gyro)
+
+Hardware
+--------
+
+- M5StickC / M5StickC Plus (SH200Q via M5.IMU)
+
+Repository Layout
+-----------------
+
+- `firmware_m5_multi_acc_logger/` — Arduino firmware
+- `pc_tools/` — PC tools (GUI/CLI/decoder)
+- `docs/` — extra docs
+
+Firmware
+--------
+
+1. Open `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` in Arduino IDE.
+2. Select board/partition, build and upload.
+3. Recording: Button A toggles logging; `/ACCLOG.BIN` is created.
+
+Configuration (`config.h`):
+- `ODR_HZ` sampling rate (e.g., 200 Hz)
+- `RANGE_G` accelerometer full scale (2/4/8/16 g)
+- `GYRO_RANGE_DPS` gyroscope full scale (250/500/1000/2000 dps)
+- `SERIAL_BAUD` serial speed (115200 default)
+
+Serial Protocol
+- `PING` → `PONG`\n
+- `INFO` → JSON line (ODR/ranges/file size)
+- `DUMP` → `OK <filesize>` then raw bytes, then `\nDONE\n`
+- `ERASE` → remove `/ACCLOG.BIN`
+- `START` / `STOP` → control logging
+
+Data Format
+-----------
+
+Header (64 bytes, little‑endian): magic `ACCLOG\0\0` (v1 may be `ACCLOG\0`), version, UID, start time, ODR, ranges, totals, reserved.
+
+Payload (int16, MSB first):
+- v1: `[ax][ay][az]`
+- v2+: `[ax][ay][az][gx][gy][gz]`
+
+CSV Columns:
+- v1: `n, t_sec, ax_g, ay_g, az_g`
+- v2+: `n, t_sec, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps`
+
+PC Tools
+--------
+
+Requirements:
+
+```
+python -m pip install -r pc_tools/requirements.txt
+```
+
+GUI:
+
+```
+python pc_tools/AccDumpGUI.py
+```
+
+CLI:
+
+```
+python pc_tools/accdump_cli.py --port /dev/ttyUSB0 --out logs/ --csv
+python pc_tools/accdump_cli.py --all --out logs/
+python pc_tools/decoder.py logs/ACCLOG.bin --csv
+```
+
+Troubleshooting
+---------------
+
+- Busy port: close other monitors; stop ModemManager on Linux; ensure `dialout` group.
+- Header timeouts/partials: dumper searches for `ACCLOG` and decoder scans/aligns; retry after power‑cycle if needed.
+- CSV errors: re‑dump with latest firmware/tools; share `.bin` size and first 64 bytes (hex) for help.
+- Unstable link: tools use 10‑second timeout and 4 KB chunks; retry.
+
+Standalone Builds (optional)
+----------------------------
+
+```
+python -m pip install -r pc_tools/requirements.txt pyinstaller
+pyinstaller --onefile --windowed pc_tools/AccDumpGUI.py
+pyinstaller --onefile pc_tools/accdump_cli.py
+```
 
 Notes
 -----
 
-- New firmware (format 0x0200) adds gyroscope channels; the decoder remains backward‑compatible with v1 logs.
-- Payload words are written MSB first by the firmware; the decoder interprets them as big‑endian int16.
-
+- v2 firmware (0x0200) adds gyro channels; decoder remains backward‑compatible.
+- Firmware writes int16 MSB‑first; decoder reads big‑endian.
