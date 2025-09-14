@@ -2,7 +2,7 @@
 #include <LittleFS.h>
 #include "config.h"
 #include "fs_format.h"
-#include "imu_mpu6886.h"
+#include "imu_sh200q.h"
 
 bool recording = false;
 File logFile;

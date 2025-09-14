@@ -11,5 +11,5 @@ constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // Serial baud rate for communication
 constexpr unsigned long SERIAL_BAUD = 921600;
 
-// LSB per g for ±4g on MPU6886 (datasheet value)
+// LSB per g for ±4g on SH200Q (datasheet value)
 constexpr float LSB_PER_G = 8192.0f;
