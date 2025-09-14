@@ -43,6 +43,26 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
         remaining = total
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'wb') as f:
+            # Some firmware revisions prepend extra text or blank lines before
+            # the binary payload. Read byte-by-byte until the header magic
+            # appears so the saved file always starts with "ACCLOG\0".
+            if remaining > 0:
+                magic = b'ACCLOG\0'
+                window = bytearray()
+                while True:
+                    b = ser.read(1)
+                    if not b:
+                        raise RuntimeError('Timeout while waiting for header')
+                    window += b
+                    if len(window) > len(magic):
+                        del window[0]
+                    if window.endswith(magic):
+                        break
+                f.write(magic)
+                remaining -= len(magic)
+                if progress_cb:
+                    progress_cb(total - remaining, total)
+
             while remaining > 0:
                 chunk = ser.read(min(4096, remaining))
                 if not chunk:
@@ -51,8 +71,10 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
                 remaining -= len(chunk)
                 if progress_cb:
                     progress_cb(total - remaining, total)
-        # read trailing DONE
-        tail = ser.readline().decode('ascii', errors='ignore').strip()
+        # read trailing DONE (some firmware versions send extra newlines)
+        tail = ''
+        while tail == '':
+            tail = ser.readline().decode('ascii', errors='ignore').strip()
         if tail != 'DONE':
             raise RuntimeError(f'Unexpected trailer: {tail!r}')
         if progress_cb:
