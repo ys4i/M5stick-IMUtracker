@@ -54,10 +54,11 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'wb') as f:
             # Some firmware revisions prepend extra text or blank lines before
-            # the binary payload. Read byte-by-byte until the header magic
-            # appears so the saved file always starts with "ACCLOG\0".
+            # the binary payload. Read byte-by-byte until the full 8-byte
+            # header magic appears so the saved file always starts with
+            # the exact bytes from the device ("ACCLOG\0\0").
             if remaining > 0:
-                magic = b'ACCLOG\0'
+                magic = b'ACCLOG\0\0'  # full 8-byte magic from firmware header
                 window = bytearray()
                 preamble = bytearray()
                 if log_cb:
@@ -84,8 +85,9 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
                     log_cb(f'Skipped preamble bytes: {preamble.hex()}')
                 if log_cb:
                     log_cb('Found header, starting transfer')
-                f.write(magic)
-                remaining -= len(magic)
+                # Write the exact bytes we just matched (8-byte magic)
+                f.write(window)
+                remaining -= len(window)
                 if progress_cb:
                     progress_cb(total - remaining, total)
 

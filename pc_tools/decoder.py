@@ -38,7 +38,15 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
     bin_path = Path(bin_path)
     with open(bin_path, 'rb') as f:
         header = parse_header(f.read(HEADER_SIZE))
-        raw = np.frombuffer(f.read(), dtype='<i2')
+        payload = f.read()
+    # Ensure even number of bytes (int16-aligned); drop any trailing odd byte
+    if len(payload) % 2 != 0:
+        payload = payload[:-1]
+    # Firmware writes MSB first (big-endian) for each int16
+    raw = np.frombuffer(payload, dtype='>i2')
+    # Ensure complete [ax,ay,az] triplets; drop any trailing incomplete values
+    if raw.size % 3 != 0:
+        raw = raw[: (raw.size // 3) * 3]
     data = raw.reshape(-1, 3)
     lsb_per_g = 32768 / header['range_g']
     acc_g = data / lsb_per_g
