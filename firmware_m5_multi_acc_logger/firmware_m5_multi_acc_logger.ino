@@ -87,6 +87,7 @@ void setup() {
     fs_init();
     imu_init();
     lcd_show_state();
+    delay(1000); // 待機しないとserialが不安定になる
 }
 
 void loop() {

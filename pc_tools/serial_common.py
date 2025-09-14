@@ -2,7 +2,7 @@ import serial
 from serial.tools import list_ports
 from pathlib import Path
 
-BAUDRATE = 921600
+BAUDRATE = 115200
 TIMEOUT = 5
 
 

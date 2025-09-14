@@ -9,7 +9,7 @@ constexpr uint16_t RANGE_G = 4;
 // Log file name stored in LittleFS
 constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // Serial baud rate for communication
-constexpr unsigned long SERIAL_BAUD = 921600;
+constexpr unsigned long SERIAL_BAUD = 115200;
 
 // LSB per g for ±4g on SH200Q (datasheet value)
 constexpr float LSB_PER_G = 8192.0f;
