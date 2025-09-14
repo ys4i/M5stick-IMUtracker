@@ -51,8 +51,11 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
                 remaining -= len(chunk)
                 if progress_cb:
                     progress_cb(total - remaining, total)
-        # read trailing DONE
+        # read trailing DONE (some firmware versions send an extra newline)
         tail = ser.readline().decode('ascii', errors='ignore').strip()
+        if not tail:
+            # consume the next line if the first read only captured a blank line
+            tail = ser.readline().decode('ascii', errors='ignore').strip()
         if tail != 'DONE':
             raise RuntimeError(f'Unexpected trailer: {tail!r}')
         if progress_cb:
