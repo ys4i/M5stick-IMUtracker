@@ -5,6 +5,7 @@ from pathlib import Path
 BAUDRATE = 115200
 TIMEOUT = 5
 MAX_ATTEMPTS = 10
+HEADER_MAX_ATTEMPTS = 256
 
 
 def list_serial_ports():
@@ -61,18 +62,24 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
                 preamble = bytearray()
                 if log_cb:
                     log_cb('Waiting for ACCLOG header')
-                while True:
+                for attempt in range(1, HEADER_MAX_ATTEMPTS + 1):
                     b = ser.read(1)
                     if not b:
                         if log_cb:
-                            log_cb('Timeout while waiting for header')
-                        raise RuntimeError('Timeout while waiting for header')
+                            log_cb(f'Header read attempt {attempt} yielded no data')
+                        continue
                     window += b
                     if len(window) > len(magic):
                         preamble.append(window[0])
                         del window[0]
                     if window.endswith(magic):
                         break
+                else:
+                    if log_cb:
+                        log_cb(
+                            f'Timeout while waiting for header after {HEADER_MAX_ATTEMPTS} attempts'
+                        )
+                    raise RuntimeError('Timeout while waiting for header')
                 if preamble and log_cb:
                     log_cb(f'Skipped preamble bytes: {preamble.hex()}')
                 if log_cb:
