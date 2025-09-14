@@ -16,7 +16,7 @@ def open_serial(port: str):
     return serial.Serial(port, BAUDRATE, timeout=TIMEOUT)
 
 
-def dump_bin(port: str, out_path: Path, progress_cb=None):
+def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
     """Dump binary log from device connected to *port* into *out_path*.
 
     Parameters
@@ -27,12 +27,20 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
         File path where downloaded binary will be written.
     progress_cb : callable, optional
         Called as ``progress_cb(read_bytes, total_bytes)`` during transfer.
+    log_cb : callable, optional
+        Called as ``log_cb(message: str)`` for debug logging.
     """
     with open_serial(port) as ser:
+        if log_cb:
+            log_cb(f'Opened {port} at {BAUDRATE} baud')
         ser.reset_input_buffer()
         ser.write(b'DUMP\n')
         ser.flush()
+        if log_cb:
+            log_cb('Sent DUMP command, waiting for response')
         first_line = ser.readline().decode('ascii', errors='ignore').strip()
+        if log_cb:
+            log_cb(f'Received line: {first_line!r}')
         if not first_line.startswith('OK'):
             raise RuntimeError(f'Unexpected response: {first_line!r}')
         try:
@@ -49,16 +57,25 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
             if remaining > 0:
                 magic = b'ACCLOG\0'
                 window = bytearray()
+                preamble = bytearray()
+                if log_cb:
+                    log_cb('Waiting for ACCLOG header')
                 while True:
                     b = ser.read(1)
                     if not b:
+                        if log_cb:
+                            log_cb('Timeout while waiting for header')
                         raise RuntimeError('Timeout while waiting for header')
                     window += b
                     if len(window) > len(magic):
+                        preamble.append(window[0])
                         del window[0]
                     if window.endswith(magic):
                         break
-
+                if preamble and log_cb:
+                    log_cb(f'Skipped preamble bytes: {preamble.hex()}')
+                if log_cb:
+                    log_cb('Found header, starting transfer')
                 f.write(magic)
                 remaining -= len(magic)
                 if progress_cb:
@@ -67,19 +84,29 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
             while remaining > 0:
                 chunk = ser.read(min(4096, remaining))
                 if not chunk:
+                    if log_cb:
+                        log_cb('Timeout while receiving data')
                     raise RuntimeError('Timeout while receiving data')
                 f.write(chunk)
                 remaining -= len(chunk)
+                if log_cb:
+                    log_cb(f'Received {len(chunk)} bytes, {remaining} remaining')
                 if progress_cb:
                     progress_cb(total - remaining, total)
         # read trailing DONE (some firmware versions send extra newlines)
+        if log_cb:
+            log_cb('Waiting for DONE trailer')
         tail = ''
         while tail == '':
             tail = ser.readline().decode('ascii', errors='ignore').strip()
+            if log_cb:
+                log_cb(f'Trailer read: {tail!r}')
         if tail != 'DONE':
             raise RuntimeError(f'Unexpected trailer: {tail!r}')
         if progress_cb:
             progress_cb(total, total)
+        if log_cb:
+            log_cb('Dump complete')
 
 
 __all__ = ['list_serial_ports', 'open_serial', 'dump_bin']

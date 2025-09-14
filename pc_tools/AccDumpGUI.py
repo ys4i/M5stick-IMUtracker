@@ -2,6 +2,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
+import traceback
 
 from serial_common import list_serial_ports, dump_bin
 import decoder
@@ -57,20 +58,24 @@ class AccDumpGUI(tk.Tk):
                                   daemon=True)
         thread.start()
 
+    def _append_log(self, msg: str):
+        self.log.insert(tk.END, msg + '\n')
+        self.log.see(tk.END)
+
     def _dump_worker(self, port: str, out_dir: Path):
         try:
             out_file = out_dir / 'ACCLOG.bin'
             def cb(read_bytes, total_bytes):
                 self.progress['maximum'] = total_bytes
                 self.progress['value'] = read_bytes
-            dump_bin(port, out_file, progress_cb=cb)
-            self.log.insert(tk.END, f'DUMP完了: {out_file}\n')
+            dump_bin(port, out_file, progress_cb=cb, log_cb=self._append_log)
+            self._append_log(f'DUMP完了: {out_file}')
             if self.csv_var.get():
                 csv_path = out_file.with_suffix('.csv')
                 decoder.bin_to_csv(out_file, csv_path)
-                self.log.insert(tk.END, f'CSV変換完了: {csv_path}\n')
-        except Exception as e:
-            self.log.insert(tk.END, f'エラー: {e}\n')
+                self._append_log(f'CSV変換完了: {csv_path}')
+        except Exception:
+            self._append_log('エラー:\n' + traceback.format_exc())
 
 
 if __name__ == '__main__':
