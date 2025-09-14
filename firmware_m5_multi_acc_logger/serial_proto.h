@@ -22,7 +22,8 @@ inline void serial_proto_poll() {
             size = f.size();
             f.close();
         }
-        Serial.printf("{\"odr\":%u,\"range_g\":%u,\"file_size\":%u}\n", ODR_HZ, RANGE_G, (unsigned)size);
+        Serial.printf("{\"odr\":%u,\"range_g\":%u,\"gyro_dps\":%u,\"file_size\":%u}\n",
+                      ODR_HZ, RANGE_G, GYRO_RANGE_DPS, (unsigned)size);
     } else if (cmd == "DUMP") {
         if (LittleFS.exists(LOG_FILE_NAME)) {
             File f = LittleFS.open(LOG_FILE_NAME, "r");

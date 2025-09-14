@@ -22,9 +22,12 @@ struct LogHeader {
     uint64_t start_unix_ms;
     uint16_t odr_hz;
     uint16_t range_g;
+    // New in v2: gyro range (dps). To keep header 64B, this occupies
+    // the first 2 bytes of the previous reserved area.
+    uint16_t gyro_range_dps;
     uint32_t total_samples;
     uint32_t dropped_samples;
-    uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 4 - 4];
+    uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 2 - 4 - 4];
 };
 
 void lcd_show_state() {
@@ -46,11 +49,13 @@ void start_logging() {
     if (!logFile) return;
     LogHeader hdr = {};
     memcpy(hdr.magic, "ACCLOG\0", 7);
-    hdr.format_ver = 0x0100;
+    // Bump format version: 0x0200 adds gyro channels and gyro_range_dps
+    hdr.format_ver = 0x0200;
     hdr.device_uid = ESP.getEfuseMac();
     hdr.start_unix_ms = 0;
     hdr.odr_hz = ODR_HZ;
     hdr.range_g = RANGE_G;
+    hdr.gyro_range_dps = GYRO_RANGE_DPS;
     hdr.total_samples = 0xFFFFFFFF;
     hdr.dropped_samples = 0;
     logFile.write(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
@@ -107,14 +112,16 @@ void loop() {
     if (now - last_us < (1000000UL / ODR_HZ)) return;
     last_us += 1000000UL / ODR_HZ;
 
-    int16_t ax, ay, az;
+    int16_t ax, ay, az, gx, gy, gz;
     if (!imu_read_accel_raw(ax, ay, az)) return;
-    ring_buf[ring_pos++] = ax >> 8;
-    ring_buf[ring_pos++] = ax & 0xFF;
-    ring_buf[ring_pos++] = ay >> 8;
-    ring_buf[ring_pos++] = ay & 0xFF;
-    ring_buf[ring_pos++] = az >> 8;
-    ring_buf[ring_pos++] = az & 0xFF;
+    if (!imu_read_gyro_raw(gx, gy, gz)) return;
+    // Write big-endian (MSB first) like accel
+    ring_buf[ring_pos++] = ax >> 8; ring_buf[ring_pos++] = ax & 0xFF;
+    ring_buf[ring_pos++] = ay >> 8; ring_buf[ring_pos++] = ay & 0xFF;
+    ring_buf[ring_pos++] = az >> 8; ring_buf[ring_pos++] = az & 0xFF;
+    ring_buf[ring_pos++] = gx >> 8; ring_buf[ring_pos++] = gx & 0xFF;
+    ring_buf[ring_pos++] = gy >> 8; ring_buf[ring_pos++] = gy & 0xFF;
+    ring_buf[ring_pos++] = gz >> 8; ring_buf[ring_pos++] = gz & 0xFF;
     total_samples++;
     if (ring_pos >= sizeof(ring_buf)) {
         logFile.write(ring_buf, sizeof(ring_buf));

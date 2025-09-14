@@ -37,4 +37,10 @@ Convert an existing binary log:
 python decoder.py ACCLOG.bin --csv
 ```
 
-The CSV file contains columns `n`, `t_sec`, `ax_g`, `ay_g`, `az_g`.
+The CSV file contains columns:
+
+- v1 logs: `n`, `t_sec`, `ax_g`, `ay_g`, `az_g`
+- v2+ logs (firmware 0x0200+): adds `gx_dps`, `gy_dps`, `gz_dps`
+
+The decoder auto-detects the format version from the 64-byte header and
+parses accordingly. Gyro scaling uses `gyro_range_dps` embedded in the header.
