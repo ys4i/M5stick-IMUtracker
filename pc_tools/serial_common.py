@@ -58,6 +58,7 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
                         del window[0]
                     if window.endswith(magic):
                         break
+
                 f.write(magic)
                 remaining -= len(magic)
                 if progress_cb:
