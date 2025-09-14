@@ -21,8 +21,8 @@
 ## 生成してほしいファイル構成
 
 ```
-/firmware/                      # Arduino IDEで開けるスケッチ
-  m5_multi_acc_logger.ino
+/firmware_m5_multi_acc_logger/                      # Arduino IDEで開けるスケッチ
+  firmware_m5_multi_acc_logger.ino
   config.h
   fs_format.h                   # LittleFS操作の薄いラッパ
   imu_sh200q.h                  # 内蔵IMU(SH200Q)用の最小ドライバ
@@ -155,7 +155,7 @@
 
 ## 初心者向けセットアップ（Arduino IDE）
 
-`/firmware/README_ArduinoIDE.md` に以下を記載して生成：
+`/firmware_m5_multi_acc_logger/README_ArduinoIDE.md` に以下を記載して生成：
 
 1. **Arduino IDE インストール**（mac/Win）。
 2. **ESP32ボードの追加**（上記URL）。
@@ -164,7 +164,7 @@
 
    * Windowsで認識されない場合：デバイスマネージャでポート確認。未認識なら\*\*USB-UARTドライバ（CP210x等）\*\*をベンダ提供から導入。
    * macOS：通常は不要。未認識時のみドライバ導入を案内。
-5. **スケッチを開く** → `m5_multi_acc_logger.ino`。
+5. **スケッチを開く** → `firmware_m5_multi_acc_logger.ino`。
 6. **シリアルポート選択** → **書き込み**。
 7. **ボタンA** で記録開始/停止。LCDに状態表示。
 8. 記録後はPCツールで吸い出し。
