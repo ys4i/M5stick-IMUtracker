@@ -1,4 +1,4 @@
-#include <M5StickCPlus.h>
+#include <M5StickC.h>
 #include <LittleFS.h>
 #include "config.h"
 #include "fs_format.h"
