@@ -4,6 +4,7 @@ from pathlib import Path
 
 BAUDRATE = 115200
 TIMEOUT = 5
+MAX_ATTEMPTS = 10
 
 
 def list_serial_ports():
@@ -97,10 +98,16 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
         if log_cb:
             log_cb('Waiting for DONE trailer')
         tail = ''
-        while tail == '':
+        for attempt in range(1, MAX_ATTEMPTS + 1):
             tail = ser.readline().decode('ascii', errors='ignore').strip()
             if log_cb:
-                log_cb(f'Trailer read: {tail!r}')
+                log_cb(f'Trailer read attempt {attempt}: {tail!r}')
+            if tail:
+                break
+        else:
+            if log_cb:
+                log_cb(f'Timeout waiting for DONE after {MAX_ATTEMPTS} attempts')
+            raise RuntimeError('Timeout waiting for DONE')
         if tail != 'DONE':
             raise RuntimeError(f'Unexpected trailer: {tail!r}')
         if progress_cb:
