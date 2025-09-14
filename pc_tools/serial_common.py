@@ -44,13 +44,21 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'wb') as f:
             # Some firmware revisions prepend extra text or blank lines before
-            # the binary payload. Read until the header magic appears so the
-            # saved file always starts with "ACCLOG\0".
+            # the binary payload. Read byte-by-byte until the header magic
+            # appears so the saved file always starts with "ACCLOG\0".
             if remaining > 0:
                 magic = b'ACCLOG\0'
-                preamble = ser.read_until(magic)
-                if not preamble.endswith(magic):
-                    raise RuntimeError('Timeout while waiting for header')
+                window = bytearray()
+                while True:
+                    b = ser.read(1)
+                    if not b:
+                        raise RuntimeError('Timeout while waiting for header')
+                    window += b
+                    if len(window) > len(magic):
+                        del window[0]
+                    if window.endswith(magic):
+                        break
+
                 f.write(magic)
                 remaining -= len(magic)
                 if progress_cb:
