@@ -25,7 +25,7 @@
   m5_multi_acc_logger.ino
   config.h
   fs_format.h                   # LittleFS操作の薄いラッパ
-  imu_mpu6886.h                 # 内蔵IMU(MPU6886)用の最小ドライバ
+  imu_sh200q.h                  # 内蔵IMU(SH200Q)用の最小ドライバ
   serial_proto.h                # シリアル簡易プロトコル
   README_ArduinoIDE.md          # 初心者向けセットアップ手順（Windows/macOS）
   partitions_8MB.csv            # (PLUS2向け) 8MB時の推奨パーティション(任意)
