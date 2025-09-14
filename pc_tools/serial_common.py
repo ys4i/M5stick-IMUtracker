@@ -43,17 +43,16 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
         remaining = total
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'wb') as f:
-            # Some firmware revisions insert a blank line before the binary header.
-            # Consume any leading CR/LF characters so the saved file starts with
-            # the expected magic bytes.
+            # Some firmware revisions prepend extra text or blank lines before
+            # the binary payload. Read until the header magic appears so the
+            # saved file always starts with "ACCLOG\0".
             if remaining > 0:
-                first_byte = ser.read(1)
-                while first_byte in b"\r\n":
-                    first_byte = ser.read(1)
-                    if not first_byte:
-                        raise RuntimeError('Timeout while receiving data')
-                f.write(first_byte)
-                remaining -= 1
+                magic = b'ACCLOG\0'
+                preamble = ser.read_until(magic)
+                if not preamble.endswith(magic):
+                    raise RuntimeError('Timeout while waiting for header')
+                f.write(magic)
+                remaining -= len(magic)
                 if progress_cb:
                     progress_cb(total - remaining, total)
 
@@ -65,10 +64,9 @@ def dump_bin(port: str, out_path: Path, progress_cb=None):
                 remaining -= len(chunk)
                 if progress_cb:
                     progress_cb(total - remaining, total)
-        # read trailing DONE (some firmware versions send an extra newline)
-        tail = ser.readline().decode('ascii', errors='ignore').strip()
-        if not tail:
-            # consume the next line if the first read only captured a blank line
+        # read trailing DONE (some firmware versions send extra newlines)
+        tail = ''
+        while tail == '':
             tail = ser.readline().decode('ascii', errors='ignore').strip()
         if tail != 'DONE':
             raise RuntimeError(f'Unexpected trailer: {tail!r}')
