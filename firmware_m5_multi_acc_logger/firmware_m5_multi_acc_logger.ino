@@ -1,8 +1,11 @@
-// Build Marker: 2025-09-15 19:29:55 (Local, Last Updated)
+// Build Marker: 2025-09-15 11:24:10 (Local, Last Updated)
 // Note: Update this timestamp whenever agents modifies this file.
 
 #include <M5StickC.h>
 #include <LittleFS.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_bt.h>
 #include "config.h"
 #include "fs_format.h"
 #include "imu_sh200q.h"
@@ -212,6 +215,9 @@ void stop_logging() {
 
 void setup() {
     M5.begin();
+    WiFi.mode(WIFI_OFF);
+    esp_wifi_stop();
+    btStop();
     M5.Lcd.setRotation(3);
     Serial.begin(SERIAL_BAUD);
     fs_init();
