@@ -36,6 +36,64 @@ def ensure_matplotlib(headless: bool):
     import matplotlib.pyplot as plt
     return plt
 
+def install_clickable_legend(fig, ax):
+    """Make legend items clickable to toggle line visibility.
+
+    Clicking a legend line or its text toggles the corresponding plotted line.
+    The legend item alpha is synced (1.0 when visible, 0.25 when hidden).
+    """
+    leg = ax.get_legend()
+    if leg is None:
+        return
+
+    # Map labels to the underlying Line2D objects currently on the Axes
+    handles, labels = ax.get_legend_handles_labels()
+    line_by_label = {line.get_label(): line for line in ax.get_lines()}
+
+    # Make legend line handles and texts pickable
+    leg_lines = leg.get_lines()
+    leg_texts = leg.get_texts()
+    for h in (*leg_lines, *leg_texts):
+        h.set_picker(True)
+
+    # Build mapping from legend item (line/text) to the original plotted line
+    handle2orig = {}
+    for h, lab in zip(leg_lines, labels):
+        if lab in line_by_label:
+            handle2orig[h] = line_by_label[lab]
+    for t, lab in zip(leg_texts, labels):
+        if lab in line_by_label:
+            handle2orig[t] = line_by_label[lab]
+
+    # Build reverse mapping for alpha sync
+    orig2handles = {}
+    for hline, t in zip(leg_lines, leg_texts):
+        lab = t.get_text()
+        if lab in line_by_label:
+            orig2handles[line_by_label[lab]] = (hline, t)
+
+    def sync_legend_alpha(orig_line):
+        hline, htext = orig2handles.get(orig_line, (None, None))
+        if not hline or not htext:
+            return
+        alpha = 1.0 if orig_line.get_visible() else 0.25
+        hline.set_alpha(alpha)
+        htext.set_alpha(alpha)
+
+    def on_pick(event):
+        artist = event.artist
+        orig = handle2orig.get(artist)
+        if orig is None:
+            return
+        orig.set_visible(not orig.get_visible())
+        sync_legend_alpha(orig)
+        fig.canvas.draw_idle()
+
+    # Initial sync for current visibility
+    for orig in orig2handles.keys():
+        sync_legend_alpha(orig)
+    fig.canvas.mpl_connect('pick_event', on_pick)
+
 
 def pick_default_cols(df: pd.DataFrame) -> list[str]:
     acc = [c for c in ("ax_g", "ay_g", "az_g") if c in df.columns]
@@ -92,6 +150,7 @@ def main():
         ax1.set_ylabel("acc [g]")
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc="upper right")
+        install_clickable_legend(fig, ax1)
 
         for c in gyr_cols:
             ax2.plot(df[xcol], df[c], label=c)
@@ -99,6 +158,7 @@ def main():
         ax2.set_xlabel("time [s]" if xcol == "t_sec" else xcol)
         ax2.grid(True, alpha=0.3)
         ax2.legend(loc="upper right")
+        install_clickable_legend(fig, ax2)
         fig.suptitle(Path(args.csv).name)
         fig.tight_layout()
     else:
@@ -109,6 +169,7 @@ def main():
         ax.set_ylabel("value")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right")
+        install_clickable_legend(fig, ax)
         fig.suptitle(Path(args.csv).name)
         fig.tight_layout()
 
@@ -124,4 +185,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
