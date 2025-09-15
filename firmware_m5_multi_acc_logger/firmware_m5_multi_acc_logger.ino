@@ -5,6 +5,8 @@
 #include "imu_sh200q.h"
 
 bool recording = false;
+static bool screen_on = true;
+static uint32_t screen_on_until_ms = 0;
 File logFile;
 static uint8_t ring_buf[4096];
 static size_t ring_pos = 0;
@@ -45,6 +47,7 @@ void lcd_show_state() {
 }
 
 void lcd_draw_fs_usage() {
+    if (!screen_on) return; // skip drawing when screen is off
     // Determine background color by state
     uint16_t bg = recording ? TFT_RED : TFT_BLACK;
     uint16_t fg = TFT_WHITE;
@@ -103,6 +106,29 @@ void lcd_draw_fs_usage() {
     }
 }
 
+// Screen power/brightness control helpers
+void screen_set(bool on) {
+    if (on == screen_on) return;
+    if (on) {
+        // Power on LCD/backlight
+        M5.Axp.SetLDO2(true);            // enable backlight power rail
+        M5.Axp.ScreenBreath(LCD_BRIGHT_ACTIVE); // set desired brightness
+        screen_on = true;
+    } else {
+        // Dim and power off
+        M5.Axp.ScreenBreath(LCD_BRIGHT_OFF);    // backlight off
+        M5.Axp.SetLDO2(false);           // cut backlight power
+        screen_on = false;
+    }
+}
+
+void ui_wake_for(uint32_t ms) {
+    screen_on_until_ms = millis() + ms;
+    screen_set(true);
+    lcd_show_state();
+    lcd_draw_fs_usage();
+}
+
 void start_logging() {
     logFile = fs_create_log();
     if (!logFile) return;
@@ -153,14 +179,22 @@ void setup() {
     fs_init();
     imu_init();
     lcd_show_state();
+    screen_on = true;
+    screen_on_until_ms = millis() + 5000; // initial wake period
     delay(1000); // 待機しないとserialが不安定になる
 }
 
 void loop() {
     M5.update();
-    if (M5.BtnA.wasPressed()) {
+    // Long press toggles recording; short press wakes screen for 10s
+    const uint32_t LONG_MS = 800;
+    if (M5.BtnA.wasReleasefor(LONG_MS)) {
         if (recording) stop_logging();
         else start_logging();
+        ui_wake_for(10000);
+    } else if (M5.BtnA.wasReleased()) {
+        // Short press
+        ui_wake_for(10000);
     }
     serial_proto_poll();
     if (!recording) {
@@ -169,6 +203,10 @@ void loop() {
         if (now_ms - last_lcd_ms >= 1000) {
             last_lcd_ms = now_ms;
             lcd_draw_fs_usage();
+        }
+        // Auto screen off
+        if (screen_on && (int32_t)(millis() - screen_on_until_ms) > 0) {
+            screen_set(false);
         }
         delay(10);
         return;
@@ -183,6 +221,10 @@ void loop() {
         if (now_ms - last_lcd_ms_rec >= 1000) {
             last_lcd_ms_rec = now_ms;
             lcd_draw_fs_usage();
+        }
+        // Auto screen off during recording
+        if (screen_on && (int32_t)(millis() - screen_on_until_ms) > 0) {
+            screen_set(false);
         }
         return;
     }
