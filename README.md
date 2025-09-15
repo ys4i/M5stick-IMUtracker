@@ -34,11 +34,17 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 ----------------------
 
 1. Arduino IDE で `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` を開く
-2. ボード（M5StickC / M5StickC Plus など）とパーティションを選択
+2. ボード（M5StickC / M5StickC Plus など）を選択
 3. ビルドして書き込み
 4. 記録操作：
    - 本体ボタンAで開始／停止
    - デバイス内に `/ACCLOG.BIN` が生成されます
+
+パーティション設定（重要）
+- Arduino IDE メニューの「ツール」→「Partition Scheme」で、必ず次を選択してください。
+  - `No OTA (1MB APP/3MB SPIFFS)`
+- この設定によりフラッシュの約3MBをファイルシステム（LittleFS領域）として使用できます。既定のパーティション（例: 1.2MB APP/1.5MB SPIFFS など）のままだと記録できる容量が小さく、早期に満杯になります。
+- 表示名は「SPIFFS」ですが、本プロジェクトは LittleFS を使用します（同一のFS領域を共有）。
 
 設定（`config.h`）
 - `ODR_HZ` サンプリングレート（例: 200 Hz）
@@ -187,7 +193,7 @@ Firmware
 --------
 
 1. Open `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` in Arduino IDE.
-2. Select board/partition, build and upload.
+2. Select your M5Stick board, set the partition scheme, build and upload.
 3. Recording: Button A toggles logging; `/ACCLOG.BIN` is created.
 
 Configuration (`config.h`):
@@ -261,3 +267,8 @@ Notes
 
 - v2 firmware (0x0200) adds gyro channels; decoder remains backward‑compatible.
 - Firmware writes int16 MSB‑first; decoder reads big‑endian.
+Partition Scheme (Important)
+- In Arduino IDE, go to Tools → Partition Scheme and select:
+  - `No OTA (1MB APP/3MB SPIFFS)`
+- This grants ~3MB to the filesystem (used by LittleFS) for longer recordings. The default schemes provide a smaller FS and will reduce recording time.
+- The menu label mentions SPIFFS, but this project uses LittleFS on the same partition region.
