@@ -7,7 +7,7 @@ M5-IMUtracker（M5Stick 加速度・ジャイロロガー） / English Follows
 M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC にバイナリ／CSVとして吸い出すためのファームウェア＋PCツールのセットです。
 
 - ファームウェアは64バイトのヘッダ＋生データのシンプルなログ形式で `/ACCLOG.BIN` に記録します。
-- PCツール（GUI/CLI）はシリアル経由で `ACCLOG.bin` をダウンロードし、必要に応じてCSVへ変換します。
+- PCツール（GUI/CLI）はシリアル経由で `ACCLOG.BIN` をダウンロードし、必要に応じてCSVへ変換します。
 - 新ファーム（v2）は加速度＋ジャイロを同時記録。旧ログ（加速度のみ v1）も自動判別して対応します。
 
 特長
@@ -21,7 +21,7 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 対応ハードウェア
 ----------------
 
-- M5StickC / M5StickC Plus 系（SH200Q IMU, M5.IMU 経由）
+- M5StickC / M5StickC Plus / M5StickC Plus2 系（SH200Q IMU, M5.IMU 経由）
 
 リポジトリ構成
 --------------
@@ -34,7 +34,7 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 ----------------------
 
 1. Arduino IDE で `firmware_m5_multi_acc_logger/firmware_m5_multi_acc_logger.ino` を開く
-2. ボード（M5StickC / M5StickC Plus など）を選択
+2. ボード（M5StickC / M5StickC Plus / M5StickC Plus2 など）を選択
 3. ビルドして書き込み
 4. 記録操作：
    - 本体ボタンAで開始／停止
@@ -47,15 +47,16 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 - 表示名は「SPIFFS」ですが、本プロジェクトは LittleFS を使用します（同一のFS領域を共有）。
 
 設定（`config.h`）
-- `ODR_HZ` サンプリングレート（例: 200 Hz）
+- `ODR_HZ` サンプリングレート（例: 128 Hz、SH200Qの対応値に自動丸め）
 - `RANGE_G` 加速度レンジ（2/4/8/16 g）
-- `GYRO_RANGE_DPS` ジャイロレンジ（250/500/1000/2000 dps）
+- `GYRO_RANGE_DPS` ジャイロレンジ（250/500/1000/2000 dps、既定2000）
 - `SERIAL_BAUD` シリアル速度（既定 115200）
 
 シリアルプロトコル（抜粋）
 - `PING` → `PONG`\n
-- `INFO` → 1行JSON（ODR/レンジ/ファイルサイズ）
-- `DUMP` → `OK <filesize>` の後に生データ、本体は最後に `\nDONE\n`
+- `INFO` → 1行JSON（ODR/レンジ/ファイルサイズ/FS使用率など）
+- `HEAD` → 先頭64バイトのヘッダを16進で表示
+- `DUMP` → `OK <filesize> <millis>` の後に生データ、本体は最後に `\nDONE\n`
 - `ERASE` → `/ACCLOG.BIN` 削除
 - `START` / `STOP` → 記録開始／停止
 
@@ -98,7 +99,7 @@ python pc_tools/AccDumpGUI.py
 ```
 
 - シリアルポートを選択して DUMP をクリック
-- 「CSVへ変換」にチェックで、`ACCLOG.bin` と同じ場所にCSVを自動生成
+- 「CSVへ変換」にチェックで、`ACCLOG.BIN` と同じ場所にCSVを自動生成
 
 CLI
 
@@ -117,7 +118,7 @@ python pc_tools/accdump_cli.py --all --out logs/
 既存のログをCSVへ変換：
 
 ```
-python pc_tools/decoder.py logs/ACCLOG.bin --csv
+python pc_tools/decoder.py logs/ACCLOG.BIN --csv
 ```
 
 トラブルシューティング
@@ -166,7 +167,7 @@ Overview
 Firmware + PC tools to log IMU (accelerometer/gyroscope) on M5Stick devices and dump as binary/CSV to your computer.
 
 - Firmware stores `/ACCLOG.BIN` with a 64‑byte header followed by raw samples.
-- PC tools (GUI/CLI) download `ACCLOG.bin` over serial and optionally convert to CSV.
+- PC tools (GUI/CLI) download `ACCLOG.BIN` over serial and optionally convert to CSV.
 - Latest firmware (v2) logs accel+gyro; older accel‑only logs (v1) are supported.
 
 Features
@@ -180,7 +181,7 @@ Features
 Hardware
 --------
 
-- M5StickC / M5StickC Plus (SH200Q via M5.IMU)
+- M5StickC / M5StickC Plus / M5StickC Plus2 (SH200Q via M5.IMU)
 
 Repository Layout
 -----------------
@@ -197,15 +198,16 @@ Firmware
 3. Recording: Button A toggles logging; `/ACCLOG.BIN` is created.
 
 Configuration (`config.h`):
-- `ODR_HZ` sampling rate (e.g., 200 Hz)
+- `ODR_HZ` sampling rate (e.g., 128 Hz; rounded to nearest supported by SH200Q)
 - `RANGE_G` accelerometer full scale (2/4/8/16 g)
-- `GYRO_RANGE_DPS` gyroscope full scale (250/500/1000/2000 dps)
+- `GYRO_RANGE_DPS` gyroscope full scale (250/500/1000/2000 dps, default 2000)
 - `SERIAL_BAUD` serial speed (115200 default)
 
 Serial Protocol
 - `PING` → `PONG`\n
-- `INFO` → JSON line (ODR/ranges/file size)
-- `DUMP` → `OK <filesize>` then raw bytes, then `\nDONE\n`
+- `INFO` → JSON line (ODR/ranges/file size/FS usage, etc.)
+- `HEAD` → dump first 64-byte header as hex
+- `DUMP` → `OK <filesize> <millis>` then raw bytes, then `\nDONE\n`
 - `ERASE` → remove `/ACCLOG.BIN`
 - `START` / `STOP` → control logging
 
@@ -242,7 +244,7 @@ CLI:
 ```
 python pc_tools/accdump_cli.py --port /dev/ttyUSB0 --out logs/ --csv
 python pc_tools/accdump_cli.py --all --out logs/
-python pc_tools/decoder.py logs/ACCLOG.bin --csv
+python pc_tools/decoder.py logs/ACCLOG.BIN --csv
 ```
 
 Troubleshooting
