@@ -45,12 +45,21 @@ void lcd_show_state() {
         M5.Lcd.setCursor(0, 0);
         M5.Lcd.setTextColor(TFT_WHITE);
         M5.Lcd.print("REC");
-    } else {
+        return;
+    }
+    if (!imu_is_calibrated()) {
         M5.Lcd.fillScreen(TFT_BLACK);
         M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextColor(TFT_WHITE);
-        M5.Lcd.print("IDLE");
+        M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Lcd.print("CALIBRATION STANDBY\n");
+        M5.Lcd.print("Hold button to start\n");
+        M5.Lcd.printf("Starts %us after hold\n", (unsigned)CALIB_DELAY_SEC);
+        return;
     }
+    M5.Lcd.fillScreen(TFT_BLACK);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.print("IDLE");
 }
 
 void lcd_draw_fs_usage() {
@@ -235,21 +244,46 @@ void setup() {
 
 void loop() {
     M5.update();
-    // Long press toggles recording; short press wakes screen for 10s
+    // State: handle calibration-first workflow
+    static bool calib_pending = false;
+    static uint32_t calib_due_ms = 0;
+
+    // Long press behavior:
+    //  - Before first calibration: schedule calibration after CALIB_DELAY_SEC
+    //  - After calibration: toggle recording
     const uint32_t LONG_MS = 800;
     if (M5.BtnA.wasReleasefor(LONG_MS)) {
-        if (recording) stop_logging();
-        else start_logging();
-        ui_wake_for(10000);
+        if (!imu_is_calibrated()) {
+            calib_pending = true;
+            calib_due_ms = millis() + (uint32_t)CALIB_DELAY_SEC * 1000UL;
+            screen_set(true);
+            M5.Lcd.fillScreen(TFT_BLACK);
+            M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+            M5.Lcd.setCursor(0, 0);
+            M5.Lcd.print("Calibration scheduled\n");
+            M5.Lcd.printf("Starting in %us...\n", (unsigned)CALIB_DELAY_SEC);
+            M5.Lcd.print("Keep device still");
+        } else {
+            if (recording) stop_logging();
+            else start_logging();
+            ui_wake_for(10000);
+        }
     } else if (M5.BtnA.wasReleased()) {
         // Short press
         ui_wake_for(10000);
+    }
+    // Kick calibration when due
+    if (calib_pending && (int32_t)(millis() - calib_due_ms) >= 0) {
+        calib_pending = false;
+        imu_calibrate_once();
+        lcd_show_state();
+        lcd_draw_fs_usage();
     }
     serial_proto_poll();
     if (!recording) {
         static uint32_t last_lcd_ms = 0;
         uint32_t now_ms = millis();
-        if (now_ms - last_lcd_ms >= 1000) {
+        if (imu_is_calibrated() && now_ms - last_lcd_ms >= 1000) {
             last_lcd_ms = now_ms;
             lcd_draw_fs_usage();
         }

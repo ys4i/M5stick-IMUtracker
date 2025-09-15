@@ -4,9 +4,8 @@
 #include <Wire.h>
 #include "config.h"
 
-// Use the built-in M5.IMU helper instead of manual I2C transactions.
-// The library internally configures the SH200Q sensor, so initialization
-// is simply a call to M5.IMU.Init().
+// Minimal SH200Q access. We avoid M5.IMU read helpers to keep readings raw
+// and prevent any library-side auto-calibration from altering values.
 
 // SH200Q register map (7-bit address 0x6C)
 #ifndef SH200I_ADDRESS
@@ -33,6 +32,18 @@ inline uint8_t sh200q_read_u8(uint8_t reg) {
     Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)1);
     if (Wire1.available()) return Wire1.read();
     return 0;
+}
+
+inline void sh200q_read_xyz16(uint8_t start_reg, int16_t& x, int16_t& y, int16_t& z) {
+    uint8_t buf[6] = {0};
+    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.write(start_reg);
+    Wire1.endTransmission(false);
+    Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)6);
+    for (int i = 0; i < 6 && Wire1.available(); ++i) buf[i] = Wire1.read();
+    x = (int16_t)((buf[1] << 8) | buf[0]);
+    y = (int16_t)((buf[3] << 8) | buf[2]);
+    z = (int16_t)((buf[5] << 8) | buf[4]);
 }
 
 inline uint8_t map_acc_range_value(uint16_t range_g) {
@@ -106,19 +117,51 @@ inline bool imu_init() {
     return true;
 }
 
-// Read raw accelerometer values via the M5.IMU helper. The function outputs
-// 16-bit ADC values matching the original implementation.
+// One-time manual calibration: estimate gyro bias while device is stationary.
+static int32_t s_gbias_x = 0, s_gbias_y = 0, s_gbias_z = 0;
+static bool s_imu_calibrated = false;
+inline bool imu_is_calibrated() { return s_imu_calibrated; }
+inline void imu_calibrate_once(uint16_t samples = 512) {
+    if (s_imu_calibrated) return;
+    // Turn screen on and show calibration screen (full blue background)
+    // Keep UI minimal to avoid timing impact.
+    M5.Axp.SetLDO2(true);
+    M5.Axp.ScreenBreath(LCD_BRIGHT_ACTIVE);
+    M5.Lcd.fillScreen(TFT_BLUE);
+    M5.Lcd.setTextColor(TFT_WHITE, TFT_BLUE);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.print("CALIBRATING...\n");
+    M5.Lcd.print("Keep device still");
+    int64_t sx = 0, sy = 0, sz = 0;
+    for (uint16_t i = 0; i < samples; ++i) {
+        int16_t gx, gy, gz;
+        sh200q_read_xyz16(0x06 /* SH200I_OUTPUT_GYRO */, gx, gy, gz);
+        sx += gx; sy += gy; sz += gz;
+        // Roughly follow ODR pacing to avoid bias from transient startup
+        delay(1000UL / (ODR_HZ ? ODR_HZ : 128));
+    }
+    s_gbias_x = (int32_t)(sx / (int32_t)samples);
+    s_gbias_y = (int32_t)(sy / (int32_t)samples);
+    s_gbias_z = (int32_t)(sz / (int32_t)samples);
+    s_imu_calibrated = true;
+}
+
+// Read raw accelerometer values directly from device (ADC units)
 inline bool imu_read_accel_raw(int16_t& ax, int16_t& ay, int16_t& az) {
-    M5.IMU.getAccelAdc(&ax, &ay, &az);
+    sh200q_read_xyz16(0x00 /* SH200I_OUTPUT_ACC */, ax, ay, az);
     return true;
 }
 
-// Read raw gyroscope values (ADC units) via M5.IMU helper
+// Read gyroscope from device (ADC units), subtract bias, convert to dps and cast
 inline bool imu_read_gyro_raw(int16_t& gx, int16_t& gy, int16_t& gz) {
-    // Use float API (dps) and cast to int16 for logging.
-    // Decoder scales back to dps using header range.
-    float fx, fy, fz;
-    M5.IMU.getGyroData(&fx, &fy, &fz); // dps
+    int16_t rx, ry, rz;
+    sh200q_read_xyz16(0x06 /* SH200I_OUTPUT_GYRO */, rx, ry, rz);
+    int32_t bx = rx - s_gbias_x;
+    int32_t by = ry - s_gbias_y;
+    int32_t bz = rz - s_gbias_z;
+    float fx = (float)bx * ((float)GYRO_RANGE_DPS / 32768.0f);
+    float fy = (float)by * ((float)GYRO_RANGE_DPS / 32768.0f);
+    float fz = (float)bz * ((float)GYRO_RANGE_DPS / 32768.0f);
     gx = (int16_t)fx; gy = (int16_t)fy; gz = (int16_t)fz;
     return true;
 }

@@ -17,6 +17,10 @@ constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // High-speed for faster dump. Stable values on ESP32/CP210x: 921600 or 1500000.
 constexpr unsigned long SERIAL_BAUD = 1500000;
 
+// Calibration behavior
+// Delay after long-press before starting calibration (seconds)
+constexpr uint8_t CALIB_DELAY_SEC = 2;
+
 // LSB per g for ±4g on SH200Q (datasheet value)
 constexpr float LSB_PER_G = 8192.0f;
 // For CSV scaling we assume symmetric mapping: LSB_PER_DPS = 32768 / range_dps
