@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import traceback
+import subprocess
+import sys
 
 from serial_common import list_serial_ports, dump_bin, get_info
 import decoder
@@ -13,6 +15,7 @@ class AccDumpGUI(tk.Tk):
         super().__init__()
         self.title('AccDumpGUI')
         self.resizable(False, False)
+        self.last_csv_path: Path | None = None
         self._build_ui()
         self.refresh_ports()
 
@@ -36,6 +39,7 @@ class AccDumpGUI(tk.Tk):
         self.log.grid(row=3, column=0, columnspan=3, pady=5)
 
         ttk.Button(frame, text='DUMP', command=self.start_dump).grid(row=4, column=0, columnspan=3)
+        ttk.Button(frame, text='グラフ表示', command=self.plot_csv).grid(row=5, column=0, columnspan=3, pady=(4, 0))
 
     def refresh_ports(self):
         ports = list_serial_ports()
@@ -92,8 +96,35 @@ class AccDumpGUI(tk.Tk):
                 csv_path = out_file.with_suffix('.csv')
                 decoder.bin_to_csv(out_file, csv_path)
                 self._append_log(f'CSV変換完了: {csv_path}')
+                self.last_csv_path = csv_path
         except Exception:
             self._append_log('エラー:\n' + traceback.format_exc())
+
+    def plot_csv(self):
+        try:
+            csv_path: Path | None = None
+            if self.last_csv_path and self.last_csv_path.exists():
+                use_last = messagebox.askyesno('グラフ表示', f'直近のCSVを表示しますか？\n{self.last_csv_path}')
+                if use_last:
+                    csv_path = self.last_csv_path
+            if csv_path is None:
+                chosen = filedialog.askopenfilename(
+                    title='CSVファイルを選択',
+                    filetypes=[('CSV files', '*.csv'), ('All files', '*.*')]
+                )
+                if not chosen:
+                    return
+                csv_path = Path(chosen)
+
+            script = Path(__file__).parent / 'plot_csv.py'
+            if not script.exists():
+                messagebox.showerror('Error', f'plot_csv.py が見つかりません: {script}')
+                return
+            cmd = [sys.executable, str(script), str(csv_path)]
+            subprocess.Popen(cmd)
+            self._append_log(f'グラフ起動: {csv_path}')
+        except Exception:
+            self._append_log('エラー(グラフ表示):\n' + traceback.format_exc())
 
 
 if __name__ == '__main__':
