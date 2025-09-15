@@ -71,6 +71,30 @@ void lcd_draw_fs_usage() {
     // Display bytes with B (bytes) unit per request
     M5.Lcd.printf("FS: %3u%%(%uB / %uB) used", pct, (unsigned)used, (unsigned)total);
 
+    // Third line: ODR and estimated remaining time based on free space
+    int th2 = M5.Lcd.fontHeight();
+    if (th2 <= 0) th2 = 16;
+    int text2_y = text_y + th2 + 4;
+    M5.Lcd.fillRect(0, text2_y - 2, M5.Lcd.width(), th2 + 4, bg);
+    M5.Lcd.setCursor(0, text2_y);
+    M5.Lcd.setTextColor(fg, bg);
+    // Data rate: 6 channels * int16 = 12 bytes per sample at ODR_HZ
+    const float bytes_per_sec = 12.0f * (float)ODR_HZ;
+    float eta_sec = 0.0f;
+    if (bytes_per_sec > 0.0f) {
+        eta_sec = (float)fs_free_bytes() / bytes_per_sec;
+    }
+    // Compact human-readable ETA
+    if (eta_sec >= 3600.0f) {
+        float hrs = eta_sec / 3600.0f;
+        M5.Lcd.printf("ODR:%uHz ETA: %.1fhour", (unsigned)ODR_HZ, hrs);
+    } else if (eta_sec >= 60.0f) {
+        float mins = eta_sec / 60.0f;
+        M5.Lcd.printf("ODR:%uHz ETA: %.1fmin", (unsigned)ODR_HZ, mins);
+    } else {
+        M5.Lcd.printf("ODR:%uHz ETA: %usec", (unsigned)ODR_HZ, (unsigned)eta_sec);
+    }
+
     // Draw usage bar background and fill
     M5.Lcd.fillRect(bar_x, bar_y, bar_w, bar_h, TFT_DARKGREY);
     int fill_w = (int)((uint32_t)bar_w * pct / 100);
