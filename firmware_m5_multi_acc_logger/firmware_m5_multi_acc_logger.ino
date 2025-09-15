@@ -61,10 +61,13 @@ void lcd_draw_fs_usage() {
     size_t used = fs_used_bytes();
     size_t total = fs_total_bytes();
 
-    // Clear text area line
-    M5.Lcd.fillRect(0, text_y - 1, M5.Lcd.width(), 10, bg);
+    // Clear text area line with sufficient height to avoid overlap
+    int th = M5.Lcd.fontHeight();
+    if (th <= 0) th = 16;
+    M5.Lcd.fillRect(0, text_y - 2, M5.Lcd.width(), th + 4, bg);
     M5.Lcd.setCursor(0, text_y);
-    M5.Lcd.setTextColor(fg);
+    // Use background color to overwrite previous text fully
+    M5.Lcd.setTextColor(fg, bg);
     // Display bytes with B (bytes) unit per request
     M5.Lcd.printf("FS: %3u%%(%uB / %uB) used", pct, (unsigned)used, (unsigned)total);
 
