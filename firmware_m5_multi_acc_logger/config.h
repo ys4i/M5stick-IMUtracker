@@ -2,8 +2,11 @@
 
 // Configuration constants for logging
 
-// Output data rate in Hz (supports 100,200,400,1000)
-constexpr uint16_t ODR_HZ = 100;
+// Output data rate in Hz.
+// SH200Q側の実機設定は離散値のみ対応のため、最も近い値に丸めて設定します。
+// 目安: Accel ODR = {8,16,32,64,128,256,512,1024} Hz, Gyro ODR = {64,128,256,500,1000} Hz
+// 推奨: 128Hz（Accel=128Hz, Gyro≈128Hzに設定されます）
+constexpr uint16_t ODR_HZ = 128;
 // Accelerometer range in g (2,4,8,16)
 constexpr uint16_t RANGE_G = 4;
 // Gyroscope range in dps (250, 500, 1000, 2000)
