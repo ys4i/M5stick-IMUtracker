@@ -44,6 +44,38 @@ void lcd_show_state() {
     }
 }
 
+void lcd_draw_fs_usage() {
+    // Determine background color by state
+    uint16_t bg = recording ? TFT_RED : TFT_BLACK;
+    uint16_t fg = TFT_WHITE;
+    // Layout
+    const int margin = 2;
+    const int text_y = 12; // second line
+    const int bar_h = 8;
+    const int bar_y = M5.Lcd.height() - bar_h - margin;
+    const int bar_x = margin;
+    const int bar_w = M5.Lcd.width() - margin * 2;
+
+    // Compute FS stats
+    uint8_t pct = fs_used_pct();
+    size_t used = fs_used_bytes();
+    size_t total = fs_total_bytes();
+
+    // Clear text area line
+    M5.Lcd.fillRect(0, text_y - 1, M5.Lcd.width(), 10, bg);
+    M5.Lcd.setCursor(0, text_y);
+    M5.Lcd.setTextColor(fg);
+    // Display bytes with B (bytes) unit per request
+    M5.Lcd.printf("FS: %3u%%(%uB / %uB) used", pct, (unsigned)used, (unsigned)total);
+
+    // Draw usage bar background and fill
+    M5.Lcd.fillRect(bar_x, bar_y, bar_w, bar_h, TFT_DARKGREY);
+    int fill_w = (int)((uint32_t)bar_w * pct / 100);
+    if (fill_w > 0) {
+        M5.Lcd.fillRect(bar_x, bar_y, fill_w, bar_h, TFT_RED);
+    }
+}
+
 void start_logging() {
     logFile = fs_create_log();
     if (!logFile) return;
@@ -63,6 +95,7 @@ void start_logging() {
     total_samples = 0;
     recording = true;
     lcd_show_state();
+    lcd_draw_fs_usage();
 }
 
 void stop_logging() {
@@ -83,6 +116,7 @@ void stop_logging() {
     }
     recording = false;
     lcd_show_state();
+    lcd_draw_fs_usage();
 }
 
 void setup() {
@@ -103,13 +137,28 @@ void loop() {
     }
     serial_proto_poll();
     if (!recording) {
+        static uint32_t last_lcd_ms = 0;
+        uint32_t now_ms = millis();
+        if (now_ms - last_lcd_ms >= 1000) {
+            last_lcd_ms = now_ms;
+            lcd_draw_fs_usage();
+        }
         delay(10);
         return;
     }
 
     static uint32_t last_us = micros();
     uint32_t now = micros();
-    if (now - last_us < (1000000UL / ODR_HZ)) return;
+    if (now - last_us < (1000000UL / ODR_HZ)) {
+        // Update LCD FS usage at ~1 Hz while recording as well
+        static uint32_t last_lcd_ms_rec = 0;
+        uint32_t now_ms = millis();
+        if (now_ms - last_lcd_ms_rec >= 1000) {
+            last_lcd_ms_rec = now_ms;
+            lcd_draw_fs_usage();
+        }
+        return;
+    }
     last_us += 1000000UL / ODR_HZ;
 
     int16_t ax, ay, az, gx, gy, gz;

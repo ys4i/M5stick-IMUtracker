@@ -4,7 +4,7 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import traceback
 
-from serial_common import list_serial_ports, dump_bin
+from serial_common import list_serial_ports, dump_bin, get_info
 import decoder
 
 
@@ -64,6 +64,24 @@ class AccDumpGUI(tk.Tk):
 
     def _dump_worker(self, port: str, out_dir: Path):
         try:
+            # Query INFO and log FS usage + estimated remaining time
+            try:
+                info = get_info(port)
+                odr = int(info.get('odr', 200))
+                fs_total = int(info.get('fs_total', 0))
+                fs_used = int(info.get('fs_used', 0))
+                fs_free = int(info.get('fs_free', 0))
+                fs_used_pct = int(info.get('fs_used_pct', 0))
+                # 6 channels * int16 = 12 bytes per sample (acc+gyro)
+                bytes_per_sec = 12 * max(1, odr)
+                est_sec = fs_free / bytes_per_sec if bytes_per_sec > 0 else 0
+                est_min = est_sec / 60.0
+                self._append_log(
+                    f'FS used {fs_used_pct}% ({fs_used}B / {fs_total}B), '
+                    f'est {est_min:.1f} min at {odr}Hz'
+                )
+            except Exception as e:
+                self._append_log(f'INFO取得失敗: {e}')
             out_file = out_dir / 'ACCLOG.bin'
             def cb(read_bytes, total_bytes):
                 self.progress['maximum'] = total_bytes

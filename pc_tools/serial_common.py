@@ -3,6 +3,7 @@ import errno
 from serial.tools import list_ports
 from pathlib import Path
 from typing import Optional
+import json
 
 BAUDRATE = 115200
 TIMEOUT = 15
@@ -189,3 +190,30 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
 
 
 __all__ = ['list_serial_ports', 'open_serial', 'dump_bin']
+def get_info(port: str) -> dict:
+    """Query device INFO JSON on the given serial port.
+
+    Returns a dict like:
+      {
+        'odr': 200,
+        'range_g': 4,
+        'gyro_dps': 2000,
+        'file_size': 0,
+        'fs_total': 0,
+        'fs_used': 0,
+        'fs_free': 0,
+        'fs_used_pct': 0,
+      }
+    """
+    with open_serial(port) as ser:
+        ser.reset_input_buffer()
+        ser.write(b'INFO\n')
+        ser.flush()
+        line = ser.readline().decode('ascii', errors='ignore').strip()
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'Failed to parse INFO response: {line!r}') from exc
+
+
+__all__ = ['list_serial_ports', 'open_serial', 'dump_bin', 'get_info']
