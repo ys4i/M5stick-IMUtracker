@@ -8,7 +8,7 @@
 // 推奨: 128Hz（Accel=128Hz, Gyro≈128Hzに設定されます）
 constexpr uint16_t ODR_HZ = 128;
 // Accelerometer range in g (2,4,8,16)
-constexpr uint16_t RANGE_G = 4;
+constexpr uint16_t RANGE_G = 8;
 // Gyroscope range in dps (250, 500, 1000, 2000)
 constexpr uint16_t GYRO_RANGE_DPS = 2000;
 // Log file name stored in LittleFS
