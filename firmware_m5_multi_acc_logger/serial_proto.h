@@ -3,11 +3,61 @@
 #include <LittleFS.h>
 #include "config.h"
 #include "fs_format.h"
+// For IMU register access
+#include <Wire.h>
 
 // start/stop functions provided by main sketch
 void start_logging();
 void stop_logging();
 extern bool recording;
+
+// --- IMU register dump helpers (SH200Q) ---
+// These are inline to keep header-only and avoid separate TU.
+#ifndef SH200I_ADDRESS
+#define SH200I_ADDRESS 0x6C
+#endif
+inline uint8_t _sh200q_read_u8(uint8_t reg) {
+    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.write(reg);
+    Wire1.endTransmission(false);
+    Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)1);
+    if (Wire1.available()) return Wire1.read();
+    return 0xFF;
+}
+inline uint16_t _decode_acc_odr(uint8_t v) {
+    struct E { uint8_t reg; uint16_t hz; } lut[] = {
+        {0x81,1024}, {0x89,512}, {0x91,256}, {0x99,128}, {0xA1,64}, {0xA9,32}, {0xB1,16}, {0xB9,8},
+    };
+    for (auto &e : lut) if (e.reg == v) return e.hz;
+    return 0;
+}
+inline uint16_t _decode_gyro_odr(uint8_t v) {
+    // Known values from M5 driver; 0x17/0x19 are best-effort
+    struct E { uint8_t reg; uint16_t hz; } lut[] = {
+        {0x11,1000}, {0x13,500}, {0x15,256}, {0x17,128}, {0x19,64},
+    };
+    for (auto &e : lut) if (e.reg == v) return e.hz;
+    return 0;
+}
+inline uint16_t _decode_acc_range_g(uint8_t v) {
+    switch (v & 0x03) { // 0x00:±4g, 0x01:±8g, 0x02:±16g
+        case 0x00: return 4;
+        case 0x01: return 8;
+        case 0x02: return 16;
+    }
+    return 0;
+}
+inline uint16_t _decode_gyro_range_dps(uint8_t v) {
+    // 0x00:±2000dps in M5 driver. Others mapped best-effort.
+    switch (v & 0x07) {
+        case 0x00: return 2000;
+        case 0x01: return 1000;
+        case 0x02: return 500;
+        case 0x03: return 250;
+        case 0x04: return 125;
+    }
+    return 0;
+}
 
 inline void serial_proto_poll() {
     if (!Serial.available()) return;
@@ -80,6 +130,21 @@ inline void serial_proto_poll() {
     } else if (cmd == "STOP") {
         if (recording) stop_logging();
         Serial.println("OK");
+    } else if (cmd == "REGS") {
+        // Dump SH200Q key registers: 0x0E (ACC_CONFIG), 0x0F (GYRO_CONFIG),
+        // 0x16 (ACC_RANGE), 0x2B (GYRO_RANGE)
+        uint8_t r0E = _sh200q_read_u8(0x0E);
+        uint8_t r0F = _sh200q_read_u8(0x0F);
+        uint8_t r16 = _sh200q_read_u8(0x16);
+        uint8_t r2B = _sh200q_read_u8(0x2B);
+        uint16_t a_odr = _decode_acc_odr(r0E);
+        uint16_t g_odr = _decode_gyro_odr(r0F);
+        uint16_t a_rng = _decode_acc_range_g(r16);
+        uint16_t g_rng = _decode_gyro_range_dps(r2B);
+        Serial.printf(
+            "REGS 0E=0x%02X 0F=0x%02X 16=0x%02X 2B=0x%02X ACC_ODR=%uHz GYRO_ODR=%uHz ACC_RANGE=%ug GYRO_RANGE=%udps\n",
+            r0E, r0F, r16, r2B, (unsigned)a_odr, (unsigned)g_odr, (unsigned)a_rng, (unsigned)g_rng
+        );
     } else {
         Serial.println("UNKNOWN");
     }
