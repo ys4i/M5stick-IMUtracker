@@ -2,6 +2,10 @@
 
 PC-side utilities for extracting accelerometer logs from the M5Stick devices.
 
+Note: Tools auto-detect baud from a fast-to-slow list
+([1500000, 921600, 460800, 230400, 115200]). Use the latest firmware
+to enable high-speed dump; default firmware baud is set to 1500000.
+
 ## GUI Usage
 
 1. Install Python and dependencies:
@@ -16,6 +20,8 @@ PC-side utilities for extracting accelerometer logs from the M5Stick devices.
    directory when prompted.
 4. If *CSVへ変換* is checked, a `.csv` file will be produced next to the
    downloaded `ACCLOG.bin`.
+
+The log window shows the selected baud rate when connected.
 
 ## CLI Usage
 

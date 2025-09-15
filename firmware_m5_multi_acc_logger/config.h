@@ -14,7 +14,8 @@ constexpr uint16_t GYRO_RANGE_DPS = 2000;
 // Log file name stored in LittleFS
 constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // Serial baud rate for communication
-constexpr unsigned long SERIAL_BAUD = 115200;
+// High-speed for faster dump. Stable values on ESP32/CP210x: 921600 or 1500000.
+constexpr unsigned long SERIAL_BAUD = 1500000;
 
 // LSB per g for ±4g on SH200Q (datasheet value)
 constexpr float LSB_PER_G = 8192.0f;

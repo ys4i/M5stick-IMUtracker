@@ -219,6 +219,11 @@ void setup() {
     esp_wifi_stop();
     btStop();
     M5.Lcd.setRotation(3);
+    // Enlarge UART buffers to improve dump throughput (ESP32 HardwareSerial)
+    #if defined(ARDUINO_ARCH_ESP32)
+    Serial.setTxBufferSize(1024);
+    Serial.setRxBufferSize(1024);
+    #endif
     Serial.begin(SERIAL_BAUD);
     fs_init();
     imu_init();

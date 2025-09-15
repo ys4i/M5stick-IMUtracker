@@ -109,7 +109,8 @@ inline void serial_proto_poll() {
             size_t size = f.size();
             // Include device current millis in OK line for PC-side timestamping
             Serial.printf("OK %u %u\n", (unsigned)size, (unsigned)millis());
-            uint8_t buf[64];
+            // Larger buffer reduces per-call overhead during transfer
+            static uint8_t buf[1024];
             while (f.available()) {
                 size_t n = f.read(buf, sizeof(buf));
                 Serial.write(buf, n);

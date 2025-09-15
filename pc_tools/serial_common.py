@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Optional
 import json
 
-BAUDRATE = 115200
+BAUDRATE = 1_500_000
+"""Default preferred baud rate for high-speed dump."""
+
+# Fallback candidates (fast -> slow). The code will auto-try these.
+CANDIDATE_BAUDRATES = [1_500_000, 921_600, 460_800, 230_400, 115_200]
 TIMEOUT = 15
 MAX_ATTEMPTS = 10
 HEADER_MAX_ATTEMPTS = 4096
@@ -16,7 +20,7 @@ def list_serial_ports():
     return [p.device for p in list_ports.comports()]
 
 
-def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
+def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: int = BAUDRATE):
     """Open a serial connection with retries and safe defaults.
 
     Retries are helpful when the device is in the middle of a reset or the
@@ -29,10 +33,10 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
             kwargs = dict(timeout=TIMEOUT, write_timeout=TIMEOUT)
             try:
                 # Linux: avoid exclusive lock to reduce EIO/EBUSY on some setups
-                ser = serial.Serial(port, BAUDRATE, exclusive=False, **kwargs)
+                ser = serial.Serial(port, baudrate, exclusive=False, **kwargs)
             except TypeError:
                 # Older pyserial without 'exclusive' kwarg
-                ser = serial.Serial(port, BAUDRATE, **kwargs)
+                ser = serial.Serial(port, baudrate, **kwargs)
             # Prevent auto-reset on some ESP32 boards by deasserting DTR/RTS
             try:
                 ser.dtr = False
@@ -49,7 +53,7 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
                 if is_eio:
                     s = serial.Serial()
                     s.port = port
-                    s.baudrate = BAUDRATE
+                    s.baudrate = baudrate
                     s.timeout = TIMEOUT
                     s.write_timeout = TIMEOUT
                     # Disable handshakes
@@ -99,23 +103,11 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
     raise last_exc
 
 
-def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
-    """Dump binary log from device connected to *port* into *out_path*.
-
-    Parameters
-    ----------
-    port : str
-        Serial port name.
-    out_path : Path
-        File path where downloaded binary will be written.
-    progress_cb : callable, optional
-        Called as ``progress_cb(read_bytes, total_bytes)`` during transfer.
-    log_cb : callable, optional
-        Called as ``log_cb(message: str)`` for debug logging.
-    """
-    with open_serial(port) as ser:
+def _dump_bin_impl(port: str, out_path: Path, baud: int, progress_cb=None, log_cb=None):
+    """Single-baud dump implementation. Returns metadata dict on success."""
+    with open_serial(port, baudrate=baud) as ser:
         if log_cb:
-            log_cb(f'Opened {port} at {BAUDRATE} baud')
+            log_cb(f'Opened {port} at {baud} baud')
         ser.reset_input_buffer()
         # Debug: request file head hex if supported
         try:
@@ -217,8 +209,9 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
 
 
 
+            READ_CHUNK = 32768  # larger chunk reduces syscall overhead
             while remaining > 0:
-                chunk = ser.read(min(4096, remaining))
+                chunk = ser.read(min(READ_CHUNK, remaining))
                 if not chunk:
                     if log_cb:
                         log_cb('Timeout while receiving data')
@@ -254,10 +247,39 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
             'total_bytes': total,
             'device_now_ms': device_now_ms,
             'pc_ok_rx_time': pc_ok_rx_time,
+            'baud': baud,
         }
 
 
+def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
+    """Dump binary log with auto-baud selection.
+
+    Tries CANDIDATE_BAUDRATES from fastest to slowest until successful.
+    """
+    last_exc: Optional[Exception] = None
+    for baud in CANDIDATE_BAUDRATES:
+        try:
+            return _dump_bin_impl(port, out_path, baud, progress_cb, log_cb)
+        except Exception as exc:
+            last_exc = exc
+            continue
+    assert last_exc is not None
+    raise last_exc
+
+
 __all__ = ['list_serial_ports', 'open_serial', 'dump_bin']
+
+def _get_info_impl(port: str, baud: int) -> dict:
+    with open_serial(port, baudrate=baud) as ser:
+        ser.reset_input_buffer()
+        ser.write(b'INFO\n')
+        ser.flush()
+        line = ser.readline().decode('ascii', errors='ignore').strip()
+    data = json.loads(line)
+    data['baud'] = baud
+    return data
+
+
 def get_info(port: str) -> dict:
     """Query device INFO JSON on the given serial port.
 
@@ -273,15 +295,15 @@ def get_info(port: str) -> dict:
         'fs_used_pct': 0,
       }
     """
-    with open_serial(port) as ser:
-        ser.reset_input_buffer()
-        ser.write(b'INFO\n')
-        ser.flush()
-        line = ser.readline().decode('ascii', errors='ignore').strip()
-    try:
-        return json.loads(line)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f'Failed to parse INFO response: {line!r}') from exc
+    last_exc: Optional[Exception] = None
+    for baud in CANDIDATE_BAUDRATES:
+        try:
+            return _get_info_impl(port, baud)
+        except Exception as exc:
+            last_exc = exc
+            continue
+    assert last_exc is not None
+    raise last_exc
 
 
 __all__ = ['list_serial_ports', 'open_serial', 'dump_bin', 'get_info']

@@ -92,6 +92,8 @@ class AccDumpGUI(tk.Tk):
                     f'FS used {fs_used_pct}% ({fs_used}B / {fs_total}B), '
                     f'est {est_min:.1f} min at {odr}Hz'
                 )
+                if 'baud' in info:
+                    self._append_log(f'Baud: {info["baud"]}')
                 if has_head is not None:
                     self._append_log(f'has_head={has_head}')
             except Exception as e:

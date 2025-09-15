@@ -12,8 +12,9 @@ def dump_one(port: str, out_dir: Path, do_csv: bool):
     def cb(read_bytes, total_bytes):
         pct = 100 * read_bytes / total_bytes if total_bytes else 0
         print(f'\r{pct:5.1f}% ({read_bytes}/{total_bytes}B)', end='', flush=True)
-    dump_bin(port, out_file, progress_cb=cb)
-    print('\nDONE')
+    meta = dump_bin(port, out_file, progress_cb=cb)
+    baud = meta.get('baud') if isinstance(meta, dict) else None
+    print(f"\nDONE" + (f" (baud={baud})" if baud else ""))
     if do_csv:
         csv_path = out_file.with_suffix('.csv')
         decoder.bin_to_csv(out_file, csv_path)
