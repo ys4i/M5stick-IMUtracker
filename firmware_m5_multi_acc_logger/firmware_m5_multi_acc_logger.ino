@@ -1,3 +1,6 @@
+// Build Marker: 2025-09-15 19:29:55 (Local, Last Updated)
+// Note: Update this timestamp whenever agents modifies this file.
+
 #include <M5StickC.h>
 #include <LittleFS.h>
 #include "config.h"
@@ -17,7 +20,8 @@ void start_logging();
 void stop_logging();
 #include "serial_proto.h"
 
-struct LogHeader {
+// Ensure exact 64-byte layout without padding
+struct __attribute__((packed)) LogHeader {
     char magic[8];
     uint16_t format_ver;
     uint64_t device_uid;
@@ -130,20 +134,48 @@ void ui_wake_for(uint32_t ms) {
 }
 
 void start_logging() {
+    // Ensure a fresh file is created
+    LittleFS.remove(LOG_FILE_NAME);
     logFile = fs_create_log();
     if (!logFile) return;
     LogHeader hdr = {};
-    memcpy(hdr.magic, "ACCLOG\0", 7);
+    // Write full 8-byte magic explicitly
+    memcpy(hdr.magic, "ACCLOG\0\0", 8);
     // Bump format version: 0x0200 adds gyro channels and gyro_range_dps
     hdr.format_ver = 0x0200;
     hdr.device_uid = ESP.getEfuseMac();
-    hdr.start_unix_ms = 0;
+    // Use device monotonic millis at start for later PC-side alignment
+    hdr.start_unix_ms = millis();
     hdr.odr_hz = ODR_HZ;
     hdr.range_g = RANGE_G;
     hdr.gyro_range_dps = GYRO_RANGE_DPS;
     hdr.total_samples = 0xFFFFFFFF;
     hdr.dropped_samples = 0;
+    logFile.seek(0);
     logFile.write(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+    logFile.flush();
+    // Debug: verify header just written
+    {
+        uint8_t chk[16] = {0};
+        logFile.seek(0);
+        logFile.read(chk, sizeof(chk));
+        Serial.print("HDRCHK ");
+        const char hex[] = "0123456789abcdef";
+        for (size_t i = 0; i < sizeof(chk); ++i) {
+            uint8_t b = chk[i];
+            Serial.write(hex[(b >> 4) & 0xF]);
+            Serial.write(hex[b & 0xF]);
+        }
+        Serial.print('\n');
+    }
+    // Reopen for append to ensure subsequent payload is not overwriting header
+    logFile.close();
+    logFile = LittleFS.open(LOG_FILE_NAME, "a");
+    if (!logFile) {
+        Serial.println("HDRCHK reopen failed");
+        recording = false;
+        return;
+    }
     ring_pos = 0;
     total_samples = 0;
     recording = true;
@@ -159,13 +191,19 @@ void stop_logging() {
     }
     if (logFile) {
         logFile.flush();
-        LogHeader hdr;
-        logFile.seek(0);
-        logFile.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
-        hdr.total_samples = total_samples;
-        logFile.seek(0);
-        logFile.write(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
         logFile.close();
+        // Update total_samples in header
+        File f = LittleFS.open(LOG_FILE_NAME, "r+");
+        if (f) {
+            LogHeader hdr;
+            f.seek(0);
+            f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+            hdr.total_samples = total_samples;
+            f.seek(0);
+            f.write(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr));
+            f.flush();
+            f.close();
+        }
     }
     recording = false;
     lcd_show_state();

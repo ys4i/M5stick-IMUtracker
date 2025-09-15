@@ -100,12 +100,16 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
             'gyro_range_dps': 2000,
             'total_samples': 0,
             'dropped_samples': 0,
+            'header_found': False,
+            'header_offset': -1,
         }
         payload = buf[off:]
     else:
         if len(buf) - idx < HEADER_SIZE:
             raise ValueError('header too short after aligning to magic')
         header = parse_header(buf[idx: idx + HEADER_SIZE])
+        header['header_found'] = True
+        header['header_offset'] = int(idx)
         payload = buf[idx + HEADER_SIZE:]
 
     # Ensure even number of bytes (int16-aligned); drop any trailing odd byte
@@ -121,8 +125,12 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
         raw = raw[: (raw.size // channels) * channels]
     data = raw.reshape(-1, channels)
 
-    # Accelerometer scaling
-    lsb_per_g = 32768 / header['range_g']
+    # Accelerometer scaling (guard against invalid range)
+    rng = int(header.get('range_g', 0) or 0)
+    if rng <= 0:
+        rng = 4  # sensible default; firmware default RANGE_G
+        header['range_g'] = rng
+    lsb_per_g = 32768 / rng
     acc_g = data[:, :3] / lsb_per_g
 
     # Timebase

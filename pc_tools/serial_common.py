@@ -33,9 +33,39 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
             except TypeError:
                 # Older pyserial without 'exclusive' kwarg
                 ser = serial.Serial(port, BAUDRATE, **kwargs)
+            # Prevent auto-reset on some ESP32 boards by deasserting DTR/RTS
+            try:
+                ser.dtr = False
+                ser.rts = False
+            except Exception:
+                pass
             return ser
         except Exception as exc:
             last_exc = exc
+            # Fallback: if Input/output error during DTR handling, open with DTR/RTS disabled
+            try:
+                msg = str(exc)
+                is_eio = getattr(exc, 'errno', None) in (5,) or 'Input/output error' in msg
+                if is_eio:
+                    s = serial.Serial()
+                    s.port = port
+                    s.baudrate = BAUDRATE
+                    s.timeout = TIMEOUT
+                    s.write_timeout = TIMEOUT
+                    # Disable handshakes
+                    s.dsrdtr = False
+                    s.rtscts = False
+                    s.xonxoff = False
+                    # Pre-set control lines low before open to avoid reset
+                    try:
+                        s.dtr = False
+                        s.rts = False
+                    except Exception:
+                        pass
+                    s.open()
+                    return s
+            except Exception:
+                pass
             time.sleep(delay_sec)
     assert last_exc is not None
     # Provide actionable message for busy device errors
@@ -52,6 +82,18 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5):
                 "Close other serial monitors (Arduino IDE Serial Monitor, screen, minicom, picocom),\n"
                 "or stop services like ModemManager/brltty if present.\n"
                 "Tip: check with 'lsof /dev/ttyUSB*' or 'fuser /dev/ttyUSB*'."
+            ),
+        ) from last_exc
+    # Provide additional guidance for generic I/O errors
+    if getattr(last_exc, 'errno', None) in (5,) or 'Input/output error' in str(last_exc):
+        raise serial.SerialException(
+            5,
+            (
+                f"could not open port {port}: I/O error.\n"
+                "Tips: unplug/replug the device; ensure Arduino IDE Serial Monitor is closed;\n"
+                "check which process holds the port with 'lsof /dev/ttyUSB*';\n"
+                "on Linux, stop ModemManager/brltty if present;\n"
+                "if the board resets on open, disabling DTR/RTS (already attempted) usually helps."
             ),
         ) from last_exc
     raise last_exc
@@ -75,17 +117,37 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
         if log_cb:
             log_cb(f'Opened {port} at {BAUDRATE} baud')
         ser.reset_input_buffer()
+        # Debug: request file head hex if supported
+        try:
+            ser.write(b'HEAD\n')
+            ser.flush()
+            head_line = ser.readline().decode('ascii', errors='ignore').strip()
+            if head_line.startswith('HEAD') and log_cb:
+                log_cb(f'Device HEAD: {head_line[5:]}')
+        except Exception:
+            pass
         ser.write(b'DUMP\n')
         ser.flush()
         if log_cb:
             log_cb('Sent DUMP command, waiting for response')
+        # Read first response line and record PC receipt time
         first_line = ser.readline().decode('ascii', errors='ignore').strip()
+        import time as _time
+        pc_ok_rx_time = _time.time()
         if log_cb:
             log_cb(f'Received line: {first_line!r}')
         if not first_line.startswith('OK'):
             raise RuntimeError(f'Unexpected response: {first_line!r}')
+        # Accept both: "OK <size>" and "OK <size> <now_ms>"
+        parts = first_line.split()
+        device_now_ms = None
         try:
-            total = int(first_line.split()[1])
+            total = int(parts[1])
+            if len(parts) >= 3:
+                try:
+                    device_now_ms = int(parts[2])
+                except ValueError:
+                    device_now_ms = None
         except Exception as exc:
             raise RuntimeError(f'Failed to parse size from: {first_line!r}') from exc
 
@@ -187,6 +249,12 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
             progress_cb(total, total)
         if log_cb:
             log_cb('Dump complete')
+        # Return metadata for timestamp estimation
+        return {
+            'total_bytes': total,
+            'device_now_ms': device_now_ms,
+            'pc_ok_rx_time': pc_ok_rx_time,
+        }
 
 
 __all__ = ['list_serial_ports', 'open_serial', 'dump_bin']
