@@ -21,7 +21,8 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 対応ハードウェア
 ----------------
 
-- M5StickC / M5StickC Plus / M5StickC Plus2 系（SH200Q IMU, M5.IMU 経由）
+- M5StickC （SH200Q IMU, M5.IMU 経由）
+- M5StickC Plus / M5StickC Plus2 系も実装予定、現在未実装
 
 リポジトリ構成
 --------------
@@ -181,7 +182,8 @@ Features
 Hardware
 --------
 
-- M5StickC / M5StickC Plus / M5StickC Plus2 (SH200Q via M5.IMU)
+- M5StickC (SH200Q via M5.IMU)
+- M5StickC Plus / M5StickC Plus2: planned, not yet implemented
 
 Repository Layout
 -----------------
