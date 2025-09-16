@@ -5,13 +5,15 @@ from pathlib import Path
 from typing import Optional, Callable
 import json
 
-BAUDRATE = 1_500_000
+BAUDRATE = 115_200
 """Default preferred baud rate for high-speed dump."""
 
 # Fallback candidates (fast -> slow). The code will auto-try these.
-CANDIDATE_BAUDRATES = [1_500_000, 921_600, 460_800, 230_400, 115_200]
+# memo: M5stickの個体によっては115200しか動作せず、そのため115200に固定
+# CANDIDATE_BAUDRATES = [1_500_000, 921_600, 460_800, 230_400, 115_200]
+CANDIDATE_BAUDRATES = [115_200]
 TIMEOUT = 15
-MAX_ATTEMPTS = 10
+MAX_ATTEMPTS = 2
 HEADER_MAX_ATTEMPTS = 4096
 
 
@@ -69,8 +71,8 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: 
             try:
                 import time as _time
                 if log_cb:
-                    log_cb('[open] Settling 1.2s and draining input')
-                _time.sleep(1.2)
+                    log_cb('[open] Settling 2.0s and draining input')
+                _time.sleep(2.0)
                 s.reset_input_buffer()
             except Exception:
                 pass
@@ -110,8 +112,8 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: 
                     try:
                         import time as _time
                         if log_cb:
-                            log_cb('[open] (fallback) Settling 1.2s and draining input')
-                        _time.sleep(1.2)
+                            log_cb('[open] (fallback) Settling 2.0s and draining input')
+                        _time.sleep(2.0)
                         s.reset_input_buffer()
                     except Exception:
                         pass
@@ -124,8 +126,8 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: 
                 if log_cb:
                     log_cb(f'[open] Retry after {delay_sec}s')
                 time.sleep(delay_sec)
+    # All attempts exhausted: raise the last exception with helpful guidance
     assert last_exc is not None
-    # Provide actionable message for busy device errors
     msg = str(last_exc)
     busy = (
         getattr(last_exc, 'errno', None) in (errno.EBUSY, 16)
@@ -141,8 +143,7 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: 
                 "Tip: check with 'lsof /dev/ttyUSB*' or 'fuser /dev/ttyUSB*'."
             ),
         ) from last_exc
-    # Provide additional guidance for generic I/O errors
-    if getattr(last_exc, 'errno', None) in (5,) or 'Input/output error' in str(last_exc):
+    if getattr(last_exc, 'errno', None) in (5,) or 'Input/output error' in msg:
         raise serial.SerialException(
             5,
             (
@@ -156,6 +157,46 @@ def open_serial(port: str, attempts: int = 5, delay_sec: float = 0.5, baudrate: 
     raise last_exc
 
 
+def _try_ping(ser: serial.Serial, log_cb: Optional[Callable[[str], None]] = None, attempts: int = 5, timeout_sec: float = 1.0) -> bool:
+    """Try PING/PONG handshake to confirm link is alive at this baud."""
+    import time as _time
+    # Temporarily shorten timeout for snappy handshake
+    try:
+        orig_timeout = ser.timeout
+        ser.timeout = timeout_sec
+    except Exception:
+        orig_timeout = None
+    try:
+        for i in range(1, max(1, attempts) + 1):
+            try:
+                ser.reset_input_buffer()
+            except Exception:
+                pass
+            if log_cb:
+                log_cb(f'[ping] Attempt {i}/{attempts}')
+            try:
+                ser.write(b'PING\n')
+                ser.flush()
+            except Exception as exc:
+                if log_cb:
+                    log_cb(f'[ping] write failed: {exc!r}')
+                _time.sleep(0.1)
+                continue
+            line = ser.readline().decode('ascii', errors='ignore').strip()
+            if log_cb:
+                log_cb(f'[ping] Received: {line!r}')
+            if line == 'PONG':
+                return True
+            _time.sleep(0.2)
+        return False
+    finally:
+        try:
+            if orig_timeout is not None:
+                ser.timeout = orig_timeout
+        except Exception:
+            pass
+
+
 def _dump_bin_impl(port: str, out_path: Path, baud: int, progress_cb=None, log_cb=None):
     """Single-baud dump implementation. Returns metadata dict on success."""
     with open_serial(port, baudrate=baud, log_cb=log_cb) as ser:
@@ -164,6 +205,11 @@ def _dump_bin_impl(port: str, out_path: Path, baud: int, progress_cb=None, log_c
         ser.reset_input_buffer()
         if log_cb:
             log_cb('[dump] Input buffer reset')
+        # Handshake to confirm link
+        if not _try_ping(ser, log_cb=log_cb):
+            if log_cb:
+                log_cb('[dump] PING failed – treating this baud as unusable')
+            raise RuntimeError('No PONG at this baud')
         # Debug: request file head hex if supported
         try:
             ser.write(b'HEAD\n')
@@ -345,11 +391,38 @@ def _get_info_impl(port: str, baud: int, log_cb: Optional[Callable[[str], None]]
         ser.reset_input_buffer()
         if log_cb:
             log_cb('[info] Input buffer reset')
+        # Handshake to confirm link
+        if not _try_ping(ser, log_cb=log_cb):
+            if log_cb:
+                log_cb('[info] PING failed – treating this baud as unusable')
+            raise RuntimeError('No PONG at this baud')
         if log_cb:
             log_cb('[info] Sending INFO')
-        ser.write(b'INFO\n')
-        ser.flush()
-        line = ser.readline().decode('ascii', errors='ignore').strip()
+        # Use shorter timeout for snappy fallback when baud mismatched
+        try:
+            orig_timeout = ser.timeout
+            ser.timeout = 2.0
+        except Exception:
+            orig_timeout = None
+        line = ''
+        try:
+            for i in range(1, 4):
+                ser.write(b'INFO\n')
+                ser.flush()
+                line = ser.readline().decode('ascii', errors='ignore').strip()
+                if log_cb:
+                    log_cb(f'[info] Attempt {i} received: {line!r}')
+                if line.startswith('{') and line.endswith('}'):
+                    break
+                # small wait before retry
+                import time as _time
+                _time.sleep(0.2)
+        finally:
+            try:
+                if orig_timeout is not None:
+                    ser.timeout = orig_timeout
+            except Exception:
+                pass
         if log_cb:
             log_cb(f'[info] Received: {line!r}')
     data = json.loads(line)

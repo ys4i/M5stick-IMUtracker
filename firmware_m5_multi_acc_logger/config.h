@@ -15,7 +15,7 @@ constexpr uint16_t GYRO_RANGE_DPS = 2000;
 constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // Serial baud rate for communication
 // High-speed for faster dump. Stable values on ESP32/CP210x: 921600 or 1500000.
-constexpr unsigned long SERIAL_BAUD = 1500000;
+constexpr unsigned long SERIAL_BAUD = 115200;
 
 // Calibration behavior
 // Delay after long-press before starting calibration (seconds)

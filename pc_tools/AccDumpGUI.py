@@ -70,7 +70,8 @@ class AccDumpGUI(tk.Tk):
         try:
             # Query INFO and log FS usage + estimated remaining time
             try:
-                info = get_info(port)
+                self._append_log('INFO問い合わせ開始')
+                info = get_info(port, log_cb=self._append_log)
                 odr = int(info.get('odr', 200))
                 fs_total = int(info.get('fs_total', 0))
                 fs_used = int(info.get('fs_used', 0))
@@ -93,15 +94,25 @@ class AccDumpGUI(tk.Tk):
                     f'est {est_min:.1f} min at {odr}Hz'
                 )
                 if 'baud' in info:
-                    self._append_log(f'Baud: {info["baud"]}')
+                    self._append_log(f'INFO成功: baud={info["baud"]}')
                 if has_head is not None:
                     self._append_log(f'has_head={has_head}')
             except Exception as e:
                 self._append_log(f'INFO取得失敗: {e}')
             out_file = out_dir / 'ACCLOG.bin'
+            self._append_log(f'DUMP開始: 出力先={out_file}')
+            last_logged_pct = {'p': -1}
             def cb(read_bytes, total_bytes):
                 self.progress['maximum'] = total_bytes
                 self.progress['value'] = read_bytes
+                try:
+                    pct = int(100 * read_bytes / total_bytes) if total_bytes else 0
+                except Exception:
+                    pct = 0
+                # ログは1%刻みで出力
+                if pct != last_logged_pct['p']:
+                    last_logged_pct['p'] = pct
+                    self._append_log(f'進捗: {pct}% ({read_bytes}/{total_bytes}B)')
             meta = dump_bin(port, out_file, progress_cb=cb, log_cb=self._append_log)
             self._append_log(f'DUMP完了: {out_file}')
 
@@ -185,6 +196,7 @@ class AccDumpGUI(tk.Tk):
                 self._append_log(f'リネーム処理失敗: {e}')
 
             if self.csv_var.get():
+                self._append_log('CSV変換開始')
                 csv_path = out_file.with_suffix('.csv')
                 decoder.bin_to_csv(out_file, csv_path)
                 self._append_log(f'CSV変換完了: {csv_path}')
