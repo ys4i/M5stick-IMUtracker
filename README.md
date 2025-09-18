@@ -18,6 +18,14 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 - シリアルDUMPはプリアンブル混入やタイミング差にロバスト
 - デコーダはログ形式（v1/v2）を自動判別しCSV出力
 
+IMUドライバ方針
+----------------
+
+- ファームは `imu_sh200q.h` で SH200Q レジスタを直接設定し、生の int16 を読み出す。
+- `M5.IMU.getAccelData()` / `getGyroData()` は内部でfloat変換や自動キャリブレーションを行い、ODRやレンジ設定が固定値に引き寄せられるため採用していない。
+- ライブラリ更新でスケールやフィルタが変動するとログの再現性が損なわれるため、デバイス側では可能な限り無加工で記録する。
+- 将来的に M5 ライブラリが生データ取得と詳細設定を保証した場合は再評価するが、現状はレジスタ直接制御を継続する。
+
 対応ハードウェア
 ----------------
 
@@ -184,6 +192,13 @@ Hardware
 
 - M5StickC (SH200Q via M5.IMU)
 - M5StickC Plus / M5StickC Plus2: planned, not yet implemented
+
+Driver Rationale
+----------------
+
+- Firmware configures the SH200Q over `imu_sh200q.h` and keeps raw int16 samples.
+- We intentionally avoid `M5.IMU.getAccelData()` / `getGyroData()` because the helpers inject float scaling, hidden calibration, and fixed ODR/range choices that make logfile scaling dependent on library versions.
+- Direct register control preserves repeatability for offline analysis; once the M5 library officially exposes raw access with configurable ODR/range we can revisit the decision.
 
 Repository Layout
 -----------------
