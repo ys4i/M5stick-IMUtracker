@@ -29,6 +29,7 @@
   serial_proto.h                # シリアル簡易プロトコル
   README_ArduinoIDE.md          # 初心者向けセットアップ手順（Windows/macOS）
   partitions_8MB.csv            # (PLUS2向け) 8MB時の推奨パーティション(任意)
+  tools/partitions_core2_16mb.csv # Core2(16MB)向け No OTA 2MB/13MB LittleFS 推奨
 
  /pc_tools/                     # 初心者向けGUI + CLI
   AccDumpGUI.py                 # Tkinter製GUI（mac/Win対応）
@@ -58,15 +59,18 @@
 
   * M5StickC：`M5Stick-C`（または`ESP32 PICO Kit`系でも可）
   * M5StickC PLUS / PLUS2：対応ボードを選択（`board listall`参照）
-* **ライブラリ**：標準の `Wire.h` を使用。IMUは**最小限のレジスタ直叩き**（依存減）。
+  * M5Stack Core2：`M5Stack-Core2` 等、M5Unified が利用できるボードを選択
+* **ライブラリ**：
+
+  * StickC 系: 標準 `Wire.h` を用いた SH200Q レジスタ直叩き
+  * Core2 系: M5Unified による IMU アクセスを基本とし、必要に応じて設定値を補足
 
 ### IMUドライバ方針
 
-- `imu_sh200q.h` では SH200Q レジスタを直接叩いて ODR / レンジ / DLPF を設定し、生の int16 を読み出す実装を採用する。
-- `M5.IMU.getAccelData()` / `getGyroData()` は内部で float 化や自動キャリブレーションを施し、ODR やレンジが固定近くに縛られる、ライブラリ更新でスケールが変動する、生ログと PC 側解析の整合が乱れるといったリスクがある。
-- プロジェクト方針は「デバイス内後処理を最小化し PC で統一解析する」ことなので、float 変換やバイアス補正を避け、生データ（ADC値）をそのまま保存する。
-- 今後 M5 ライブラリが生値取得と詳細設定を公式に保証した場合は採用を再検討するが、現状は再現性重視のため M5.IMU API を利用しない。
-- メンテナンス時の留意点：`M5.IMU.Init()` の実装変更で Wire 設定が変わる可能性があるため、必要に応じてレジスタ再設定を継続する。
+- SH200Q 搭載デバイス（StickC系のSH200Qモデルなど）は、再現性と既知不具合回避のためレジスタ直叩きで ODR/レンジ/DLPF を設定し、生の int16 を取得する（`imu_sh200q.h`）。`M5.IMU.get*` は内部スケーリング・自動キャリブが入るため使用しない。
+- SH200Q 以外のIMU（例: MPU6886 搭載の Core2 や将来の非SH200Q Stick 系）は、M5Unified（公式ライブラリ）経由の設定・取得を採用する。
+- ヘッダ 0x0201 では `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録し、PC側デコーダはこのメタを用いてスケーリングする（0x0200との後方互換あり）。
+- メンテナンス上、SH200Q側は将来の M5.IMU 実装変更に備え、必要ならレジスタ再設定を継続する。
 
 ### 2) 記録仕様
 

@@ -1,14 +1,15 @@
-M5-IMUtracker（M5Stick 加速度・ジャイロロガー） / English Follows
-=================================================================
+M5-IMUtracker（M5Stick/Core2 加速度・ジャイロロガー） / English Follows
+========================================================================
 
 概要（日本語）
 --------------
 
-M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC にバイナリ／CSVとして吸い出すためのファームウェア＋PCツールのセットです。
+M5Stick 系および M5Stack Core2 デバイスで IMU（加速度・ジャイロ）を記録し、PC にバイナリ／CSVとして吸い出すためのファームウェア＋PCツールのセットです。
 
 - ファームウェアは64バイトのヘッダ＋生データのシンプルなログ形式で `/ACCLOG.BIN` に記録します。
 - PCツール（GUI/CLI）はシリアル経由で `ACCLOG.BIN` をダウンロードし、必要に応じてCSVへ変換します。
-- 新ファーム（v2）は加速度＋ジャイロを同時記録。旧ログ（加速度のみ v1）も自動判別して対応します。
+- 新ファーム（v2/0x0200）は加速度＋ジャイロを同時記録。旧ログ（加速度のみ v1/0x0100）も自動判別して対応します。
+- 拡張ヘッダ（0x0201）では IMU 種別/機種 ID/スケール情報を含み、Core2 など M5Unified 利用ボードでもスケーリングをメタ経由で正しく行います。
 
 特長
 ----
@@ -18,19 +19,18 @@ M5Stick 系デバイスで IMU（加速度・ジャイロ）を記録し、PC �
 - シリアルDUMPはプリアンブル混入やタイミング差にロバスト
 - デコーダはログ形式（v1/v2）を自動判別しCSV出力
 
-IMUドライバ方針
-----------------
+IMUドライバ方針（IMU別）
+--------------------
 
-- ファームは `imu_sh200q.h` で SH200Q レジスタを直接設定し、生の int16 を読み出す。
-- `M5.IMU.getAccelData()` / `getGyroData()` は内部でfloat変換や自動キャリブレーションを行い、ODRやレンジ設定が固定値に引き寄せられるため採用していない。
-- ライブラリ更新でスケールやフィルタが変動するとログの再現性が損なわれるため、デバイス側では可能な限り無加工で記録する。
-- 将来的に M5 ライブラリが生データ取得と詳細設定を保証した場合は再評価するが、現状はレジスタ直接制御を継続する。
+- SH200Q 搭載デバイス（StickC系のSH200Qモデルなど）は既知の挙動差・スケールばらつき回避のため、`imu_sh200q.h` でレジスタ直叩きし、生の int16 を記録する。
+- それ以外のIMU（例: MPU6886 搭載の Core2 や Stick 系バリエーション）は不具合なしとみなし、M5Unified（公式ライブラリ）経由の設定・取得を採用する。ヘッダ 0x0201 に `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録し、PC側で正しくスケーリングする。
+- いずれもデバイス内後処理を最小化し、PC側で統一解析する方針。将来的にライブラリ側で生値取得が安定した場合は再評価する。
 
 対応ハードウェア
-----------------
+---------------
 
-- M5StickC （SH200Q IMU, M5.IMU 経由）
-- M5StickC Plus / M5StickC Plus2 系も実装予定、現在未実装
+- SH200Q 搭載モデル（例: M5StickC/Plus/Plus2 のSH200Q版） — レジスタ直叩き
+- それ以外のIMU搭載モデル（例: M5Stack Core2 の MPU6886、将来の非SH200Q Stick系など） — M5Unified 経由
 
 リポジトリ構成
 --------------
@@ -50,10 +50,10 @@ IMUドライバ方針
    - デバイス内に `/ACCLOG.BIN` が生成されます
 
 パーティション設定（重要）
-- Arduino IDE メニューの「ツール」→「Partition Scheme」で、必ず次を選択してください。
-  - `No OTA (1MB APP/3MB SPIFFS)`
-- この設定によりフラッシュの約3MBをファイルシステム（LittleFS領域）として使用できます。既定のパーティション（例: 1.2MB APP/1.5MB SPIFFS など）のままだと記録できる容量が小さく、早期に満杯になります。
-- 表示名は「SPIFFS」ですが、本プロジェクトは LittleFS を使用します（同一のFS領域を共有）。
+- Arduino IDE メニューの「ツール」→「Partition Scheme」で、次を推奨します。
+  - Core2（16MB想定）: 同梱 `tools/partitions_core2_16mb.csv` の No OTA (APP 2MB / LittleFS 13MB 目安)
+  - StickC 系ほか容量不明: `No OTA (1MB APP/3MB SPIFFS)` をフォールバック選択
+- この設定によりフラッシュをファイルシステム（LittleFS領域）に広く割り当てます。表示名は「SPIFFS」ですが、実装は LittleFS を使用します（同一FS領域を共有）。
 
 設定（`config.h`）
 - `ODR_HZ` サンプリングレート（例: 128 Hz、SH200Qの対応値に自動丸め）
@@ -74,15 +74,16 @@ IMUドライバ方針
 
 ヘッダ（64バイト, little-endian）
 - magic[8]: `"ACCLOG\0\0"`（古いv1では `"ACCLOG\0"`）
-- format_ver: uint16（v1: 0x0100 加速度のみ, v2+: 0x0200 加速度+ジャイロ）
+- format_ver: uint16（v1: 0x0100 加速度のみ, v2: 0x0200 加速度+ジャイロ, 拡張: 0x0201 メタ追加）
 - device_uid: uint64
 - start_unix_ms: uint64（任意）
 - odr_hz: uint16
 - range_g: uint16
 - v2+: gyro_range_dps: uint16（v1のreserved領域を再利用）
+- v2.1+: imu_type, device_model, lsb_per_g, lsb_per_dps（旧reserved内に追加）
 - total_samples: uint32（記録中は 0xFFFFFFFF）
 - dropped_samples: uint32
-- reserved: 64バイトにゼロ詰め
+- reserved: 64バイトにゼロ詰め（上記以外）
 
 ペイロード（MSB first の int16 配列）
 - v1: `[ax][ay][az]` の繰り返し
@@ -190,14 +191,14 @@ Features
 Hardware
 --------
 
-- M5StickC (SH200Q via M5.IMU)
-- M5StickC Plus / M5StickC Plus2: planned, not yet implemented
+- Devices with SH200Q (e.g., StickC/Plus/Plus2 SH200Q models) — register-level driver
+- Devices with other IMUs (e.g., Core2 with MPU6886, future non-SH200Q Stick variants) — M5Unified
 
 Driver Rationale
 ----------------
 
-- Firmware configures the SH200Q over `imu_sh200q.h` and keeps raw int16 samples.
-- We intentionally avoid `M5.IMU.getAccelData()` / `getGyroData()` because the helpers inject float scaling, hidden calibration, and fixed ODR/range choices that make logfile scaling dependent on library versions.
+- SH200Q devices use `imu_sh200q.h` to configure registers directly and keep raw int16 samples for reproducibility and to avoid known quirks.
+- Non-SH200Q devices use M5Unified APIs; format 0x0201 stores `imu_type/device_model/lsb_per_g/lsb_per_dps` to ensure correct scaling on PC.
 - Direct register control preserves repeatability for offline analysis; once the M5 library officially exposes raw access with configurable ODR/range we can revisit the decision.
 
 Repository Layout
