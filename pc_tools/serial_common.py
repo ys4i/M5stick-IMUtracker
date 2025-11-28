@@ -4,6 +4,7 @@ from serial.tools import list_ports
 from pathlib import Path
 from typing import Optional, Callable
 import json
+from info_format import enrich_info_defaults
 
 BAUDRATE = 115_200
 """Default preferred baud rate for high-speed dump."""
@@ -382,7 +383,7 @@ def dump_bin(port: str, out_path: Path, progress_cb=None, log_cb=None):
     raise last_exc
 
 
-__all__ = ['list_serial_ports', 'open_serial', 'dump_bin']
+__all__ = ['list_serial_ports', 'open_serial', 'dump_bin', 'get_info']
 
 def _get_info_impl(port: str, baud: int, log_cb: Optional[Callable[[str], None]] = None) -> dict:
     if log_cb:
@@ -427,7 +428,7 @@ def _get_info_impl(port: str, baud: int, log_cb: Optional[Callable[[str], None]]
             log_cb(f'[info] Received: {line!r}')
     data = json.loads(line)
     data['baud'] = baud
-    return data
+    return enrich_info_defaults(data)
 
 
 def get_info(port: str, log_cb: Optional[Callable[[str], None]] = None) -> dict:

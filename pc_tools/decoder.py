@@ -6,6 +6,7 @@ import pandas as pd
 # Header formats
 HEADER_FMT_V1 = '<8sHQQHHII26s'          # accel-only
 HEADER_FMT_V2 = '<8sHQQHHHII24s'         # adds gyro_range_dps (uint16)
+HEADER_FMT_V2_1 = '<8sHQQHHHHHffII12s'   # adds imu_type, device_model, lsb_per_g, lsb_per_dps
 HEADER_PREFIX_FMT = '<8sHQQHH'           # common prefix up to range_g
 HEADER_PREFIX_SIZE = struct.calcsize(HEADER_PREFIX_FMT)
 HEADER_SIZE = 64
@@ -21,17 +22,28 @@ def parse_header(data: bytes) -> dict:
     )
     if not magic.startswith(b'ACCLOG'):
         raise ValueError('invalid magic')
-    if fmt_ver >= 0x0200:
+    if fmt_ver >= 0x0201:
         (magic, fmt_ver, device_uid, start_ms, odr, range_g,
-         gyro_range_dps, total_samples, dropped, _reserved) = struct.unpack(
-            HEADER_FMT_V2, data[:HEADER_SIZE]
+         gyro_range_dps, imu_type, device_model, lsb_per_g, lsb_per_dps,
+         total_samples, dropped, _reserved) = struct.unpack(
+            HEADER_FMT_V2_1, data[:HEADER_SIZE]
         )
     else:
-        (magic, fmt_ver, device_uid, start_ms, odr, range_g,
-         total_samples, dropped, _reserved) = struct.unpack(
-            HEADER_FMT_V1, data[:HEADER_SIZE]
-        )
-        gyro_range_dps = 0
+        if fmt_ver >= 0x0200:
+            (magic, fmt_ver, device_uid, start_ms, odr, range_g,
+             gyro_range_dps, total_samples, dropped, _reserved) = struct.unpack(
+                HEADER_FMT_V2, data[:HEADER_SIZE]
+            )
+        else:
+            (magic, fmt_ver, device_uid, start_ms, odr, range_g,
+             total_samples, dropped, _reserved) = struct.unpack(
+                HEADER_FMT_V1, data[:HEADER_SIZE]
+            )
+            gyro_range_dps = 0
+        imu_type = 0
+        device_model = 0
+        lsb_per_g = 0.0
+        lsb_per_dps = 0.0
     return {
         'format_ver': fmt_ver,
         'device_uid': device_uid,
@@ -39,6 +51,10 @@ def parse_header(data: bytes) -> dict:
         'odr_hz': odr,
         'range_g': range_g,
         'gyro_range_dps': gyro_range_dps,
+        'imu_type': imu_type,
+        'device_model': device_model,
+        'lsb_per_g': lsb_per_g,
+        'lsb_per_dps': lsb_per_dps,
         'total_samples': total_samples,
         'dropped_samples': dropped,
     }
@@ -125,12 +141,14 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
         raw = raw[: (raw.size // channels) * channels]
     data = raw.reshape(-1, channels)
 
-    # Accelerometer scaling (guard against invalid range)
+    # Accelerometer scaling (prefer header LSB if present)
+    lsb_per_g = float(header.get('lsb_per_g') or 0.0)
     rng = int(header.get('range_g', 0) or 0)
-    if rng <= 0:
-        rng = 4  # sensible default; firmware default RANGE_G
-        header['range_g'] = rng
-    lsb_per_g = 32768 / rng
+    if lsb_per_g <= 0.0:
+        if rng <= 0:
+            rng = 4
+            header['range_g'] = rng
+        lsb_per_g = 32768 / rng
     acc_g = data[:, :3] / lsb_per_g
 
     # Timebase
@@ -147,7 +165,15 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
     }
     if data.shape[1] == 6:
         # Firmware v2 stores gyro values as int16 cast from dps
-        gyro_dps = data[:, 3:6].astype(np.float32)
+        # Scaling (prefer header lsb_per_dps if present)
+        lsb_per_dps = float(header.get('lsb_per_dps') or 0.0)
+        g_rng = int(header.get('gyro_range_dps', 0) or 0)
+        if lsb_per_dps <= 0.0:
+            if g_rng <= 0:
+                g_rng = 2000
+                header['gyro_range_dps'] = g_rng
+            lsb_per_dps = 32768 / g_rng
+        gyro_dps = data[:, 3:6].astype(np.float32) / lsb_per_dps
         cols.update({
             'gx_dps': gyro_dps[:, 0],
             'gy_dps': gyro_dps[:, 1],

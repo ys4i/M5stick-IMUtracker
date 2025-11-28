@@ -2,15 +2,20 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include "config.h"
+#include "board_hal.h"
 #include "fs_format.h"
 // For IMU register access
 #include <Wire.h>
+#if !HAL_IMU_IS_SH200Q
+#include "imu_mpu6886_unified.h"
+#endif
 
 // start/stop functions provided by main sketch
 void start_logging();
 void stop_logging();
 extern bool recording;
 
+#if HAL_IMU_IS_SH200Q
 // --- IMU register dump helpers (SH200Q) ---
 // These are inline to keep header-only and avoid separate TU.
 #ifndef SH200I_ADDRESS
@@ -58,6 +63,7 @@ inline uint16_t _decode_gyro_range_dps(uint8_t v) {
     }
     return 0;
 }
+#endif
 
 inline void serial_proto_poll() {
     if (!Serial.available()) return;
@@ -80,9 +86,10 @@ inline void serial_proto_poll() {
             f.close();
         }
         Serial.printf(
-            "{\"uid\":\"0x%016llX\",\"odr\":%u,\"range_g\":%u,\"gyro_dps\":%u,\"file_size\":%u,\"fs_total\":%u,\"fs_used\":%u,\"fs_free\":%u,\"fs_used_pct\":%u,\"has_head\":%u}\n",
-            (unsigned long long)uid, ODR_HZ, RANGE_G, GYRO_RANGE_DPS, (unsigned)size,
-            (unsigned)fs_total_bytes(), (unsigned)fs_used_bytes(), (unsigned)fs_free_bytes(), (unsigned)fs_used_pct(),
+            "{\"uid\":\"0x%016llX\",\"odr\":%u,\"range_g\":%u,\"gyro_dps\":%u,\"imu_type\":%u,\"device_model\":%u,\"format\":\"0x0201\",\"lsb_per_g\":%.3f,\"lsb_per_dps\":%.3f,\"file_size\":%u,\"fs_total\":%u,\"fs_used\":%u,\"fs_free\":%u,\"fs_used_pct\":%u,\"has_head\":%u}\n",
+            (unsigned long long)uid, ODR_HZ, RANGE_G, GYRO_RANGE_DPS, (unsigned)HAL_IMU_TYPE, (unsigned)HAL_DEVICE_MODEL,
+            (float)(32768.0f / (float)RANGE_G), (float)(32768.0f / (float)GYRO_RANGE_DPS),
+            (unsigned)size, (unsigned)fs_total_bytes(), (unsigned)fs_used_bytes(), (unsigned)fs_free_bytes(), (unsigned)fs_used_pct(),
             (unsigned)has_head
         );
     } else if (cmd == "HEAD") {
@@ -132,8 +139,7 @@ inline void serial_proto_poll() {
         if (recording) stop_logging();
         Serial.println("OK");
     } else if (cmd == "REGS") {
-        // Dump SH200Q key registers: 0x0E (ACC_CONFIG), 0x0F (GYRO_CONFIG),
-        // 0x16 (ACC_RANGE), 0x2B (GYRO_RANGE)
+#if HAL_IMU_IS_SH200Q
         uint8_t r0E = _sh200q_read_u8(0x0E);
         uint8_t r0F = _sh200q_read_u8(0x0F);
         uint8_t r16 = _sh200q_read_u8(0x16);
@@ -146,6 +152,25 @@ inline void serial_proto_poll() {
             "REGS 0E=0x%02X 0F=0x%02X 16=0x%02X 2B=0x%02X ACC_ODR=%uHz GYRO_ODR=%uHz ACC_RANGE=%ug GYRO_RANGE=%udps\n",
             r0E, r0F, r16, r2B, (unsigned)a_odr, (unsigned)g_odr, (unsigned)a_rng, (unsigned)g_rng
         );
+#else
+        // Minimal MPU6886 dump
+        auto mpu_read = [](uint8_t reg) {
+            Wire.beginTransmission(MPU6886_ADDR);
+            Wire.write(reg);
+            Wire.endTransmission(false);
+            Wire.requestFrom((int)MPU6886_ADDR, 1);
+            if (Wire.available()) return Wire.read();
+            return 0xFF;
+        };
+        uint8_t cfg = mpu_read(MPU6886_REG_CONFIG);
+        uint8_t smpl = mpu_read(MPU6886_REG_SMPLRT_DIV);
+        uint8_t gcfg = mpu_read(MPU6886_REG_GYRO_CONFIG);
+        uint8_t acfg = mpu_read(MPU6886_REG_ACCEL_CONFIG);
+        Serial.printf(
+            "REGS CONFIG=0x%02X SMPLRT_DIV=%u GYRO_CONFIG=0x%02X ACCEL_CONFIG=0x%02X\n",
+            cfg, smpl, gcfg, acfg
+        );
+#endif
     } else {
         Serial.println("UNKNOWN");
     }

@@ -1,14 +1,18 @@
 // Build Marker: 2025-09-15 11:24:10 (Local, Last Updated)
 // Note: Update this timestamp whenever agents modifies this file.
 
-#include <M5StickC.h>
 #include <LittleFS.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_bt.h>
 #include "config.h"
+#include "board_hal.h"
 #include "fs_format.h"
+#if HAL_IMU_IS_SH200Q
 #include "imu_sh200q.h"
+#else
+#include "imu_mpu6886_unified.h"
+#endif
 
 bool recording = false;
 static bool screen_on = true;
@@ -17,6 +21,7 @@ File logFile;
 static uint8_t ring_buf[4096];
 static size_t ring_pos = 0;
 static uint32_t total_samples = 0;
+static uint32_t last_idle_ms = 0; // for auto power-off when idle
 
 // forward declaration for serial protocol
 void start_logging();
@@ -31,35 +36,39 @@ struct __attribute__((packed)) LogHeader {
     uint64_t start_unix_ms;
     uint16_t odr_hz;
     uint16_t range_g;
-    // New in v2: gyro range (dps). To keep header 64B, this occupies
-    // the first 2 bytes of the previous reserved area.
+    // New in v2: gyro range (dps).
     uint16_t gyro_range_dps;
+    // New in v2.1: IMU meta
+    uint16_t imu_type;
+    uint16_t device_model;
+    float lsb_per_g;
+    float lsb_per_dps;
     uint32_t total_samples;
     uint32_t dropped_samples;
-    uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 2 - 4 - 4];
+    uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 2 - 2 - 2 - 4 - 4 - 4 - 4];
 };
 
 void lcd_show_state() {
     if (recording) {
-        M5.Lcd.fillScreen(TFT_RED);
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextColor(TFT_WHITE);
-        M5.Lcd.print("REC");
+        hal_lcd().fillScreen(TFT_RED);
+        hal_lcd().setCursor(0, 0);
+        hal_lcd().setTextColor(TFT_WHITE);
+        hal_lcd().print("REC");
         return;
     }
     if (!imu_is_calibrated()) {
-        M5.Lcd.fillScreen(TFT_BLACK);
-        M5.Lcd.setCursor(0, 0);
-        M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-        M5.Lcd.print("CALIBRATION STANDBY\n");
-        M5.Lcd.print("Hold button to start\n");
-        M5.Lcd.printf("Starts %us after hold\n", (unsigned)CALIB_DELAY_SEC);
+        hal_lcd().fillScreen(TFT_BLACK);
+        hal_lcd().setCursor(0, 0);
+        hal_lcd().setTextColor(TFT_WHITE, TFT_BLACK);
+        hal_lcd().print("CALIBRATION STANDBY\n");
+        hal_lcd().print("Hold button to start\n");
+        hal_lcd().printf("Starts %us after hold\n", (unsigned)CALIB_DELAY_SEC);
         return;
     }
-    M5.Lcd.fillScreen(TFT_BLACK);
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.print("IDLE");
+    hal_lcd().fillScreen(TFT_BLACK);
+    hal_lcd().setCursor(0, 0);
+    hal_lcd().setTextColor(TFT_WHITE);
+    hal_lcd().print("IDLE");
 }
 
 void lcd_draw_fs_usage() {
@@ -71,9 +80,9 @@ void lcd_draw_fs_usage() {
     const int margin = 2;
     const int text_y = 12; // second line
     const int bar_h = 8;
-    const int bar_y = M5.Lcd.height() - bar_h - margin;
+    const int bar_y = hal_lcd().height() - bar_h - margin;
     const int bar_x = margin;
-    const int bar_w = M5.Lcd.width() - margin * 2;
+    const int bar_w = hal_lcd().width() - margin * 2;
 
     // Compute FS stats
     uint8_t pct = fs_used_pct();
@@ -81,22 +90,22 @@ void lcd_draw_fs_usage() {
     size_t total = fs_total_bytes();
 
     // Clear text area line with sufficient height to avoid overlap
-    int th = M5.Lcd.fontHeight();
+    int th = hal_lcd().fontHeight();
     if (th <= 0) th = 16;
-    M5.Lcd.fillRect(0, text_y - 2, M5.Lcd.width(), th + 4, bg);
-    M5.Lcd.setCursor(0, text_y);
+    hal_lcd().fillRect(0, text_y - 2, hal_lcd().width(), th + 4, bg);
+    hal_lcd().setCursor(0, text_y);
     // Use background color to overwrite previous text fully
-    M5.Lcd.setTextColor(fg, bg);
+    hal_lcd().setTextColor(fg, bg);
     // Display bytes with B (bytes) unit per request
-    M5.Lcd.printf("FS: %3u%%(%uB / %uB) used", pct, (unsigned)used, (unsigned)total);
+    hal_lcd().printf("FS: %3u%%(%uB / %uB) used", pct, (unsigned)used, (unsigned)total);
 
     // Third line: ODR and estimated remaining time based on free space
-    int th2 = M5.Lcd.fontHeight();
+    int th2 = hal_lcd().fontHeight();
     if (th2 <= 0) th2 = 16;
     int text2_y = text_y + th2 + 4;
-    M5.Lcd.fillRect(0, text2_y - 2, M5.Lcd.width(), th2 + 4, bg);
-    M5.Lcd.setCursor(0, text2_y);
-    M5.Lcd.setTextColor(fg, bg);
+    hal_lcd().fillRect(0, text2_y - 2, hal_lcd().width(), th2 + 4, bg);
+    hal_lcd().setCursor(0, text2_y);
+    hal_lcd().setTextColor(fg, bg);
     // Data rate: 6 channels * int16 = 12 bytes per sample at ODR_HZ
     const float bytes_per_sec = 12.0f * (float)ODR_HZ;
     float eta_sec = 0.0f;
@@ -106,19 +115,19 @@ void lcd_draw_fs_usage() {
     // Compact human-readable ETA
     if (eta_sec >= 3600.0f) {
         float hrs = eta_sec / 3600.0f;
-        M5.Lcd.printf("ODR:%uHz ETA: %.1fhour", (unsigned)ODR_HZ, hrs);
+        hal_lcd().printf("ODR:%uHz ETA: %.1fhour", (unsigned)ODR_HZ, hrs);
     } else if (eta_sec >= 60.0f) {
         float mins = eta_sec / 60.0f;
-        M5.Lcd.printf("ODR:%uHz ETA: %.1fmin", (unsigned)ODR_HZ, mins);
+        hal_lcd().printf("ODR:%uHz ETA: %.1fmin", (unsigned)ODR_HZ, mins);
     } else {
-        M5.Lcd.printf("ODR:%uHz ETA: %usec", (unsigned)ODR_HZ, (unsigned)eta_sec);
+        hal_lcd().printf("ODR:%uHz ETA: %usec", (unsigned)ODR_HZ, (unsigned)eta_sec);
     }
 
     // Draw usage bar background and fill
-    M5.Lcd.fillRect(bar_x, bar_y, bar_w, bar_h, TFT_DARKGREY);
+    hal_lcd().fillRect(bar_x, bar_y, bar_w, bar_h, TFT_DARKGREY);
     int fill_w = (int)((uint32_t)bar_w * pct / 100);
     if (fill_w > 0) {
-        M5.Lcd.fillRect(bar_x, bar_y, fill_w, bar_h, TFT_RED);
+        hal_lcd().fillRect(bar_x, bar_y, fill_w, bar_h, TFT_RED);
     }
 }
 
@@ -127,13 +136,11 @@ void screen_set(bool on) {
     if (on == screen_on) return;
     if (on) {
         // Power on LCD/backlight
-        M5.Axp.SetLDO2(true);            // enable backlight power rail
-        M5.Axp.ScreenBreath(LCD_BRIGHT_ACTIVE); // set desired brightness
+        hal_screen_on(LCD_BRIGHT_ACTIVE, LCD_BRIGHT_OFF);
         screen_on = true;
     } else {
         // Dim and power off
-        M5.Axp.ScreenBreath(LCD_BRIGHT_OFF);    // backlight off
-        M5.Axp.SetLDO2(false);           // cut backlight power
+        hal_screen_off(LCD_BRIGHT_OFF);    // backlight off
         screen_on = false;
     }
 }
@@ -143,6 +150,7 @@ void ui_wake_for(uint32_t ms) {
     screen_set(true);
     lcd_show_state();
     lcd_draw_fs_usage();
+    last_idle_ms = millis();
 }
 
 void start_logging() {
@@ -153,14 +161,18 @@ void start_logging() {
     LogHeader hdr = {};
     // Write full 8-byte magic explicitly
     memcpy(hdr.magic, "ACCLOG\0\0", 8);
-    // Bump format version: 0x0200 adds gyro channels and gyro_range_dps
-    hdr.format_ver = 0x0200;
+    // Bump format version: 0x0201 adds IMU meta
+    hdr.format_ver = 0x0201;
     hdr.device_uid = ESP.getEfuseMac();
     // Use device monotonic millis at start for later PC-side alignment
     hdr.start_unix_ms = millis();
     hdr.odr_hz = ODR_HZ;
     hdr.range_g = RANGE_G;
     hdr.gyro_range_dps = GYRO_RANGE_DPS;
+    hdr.imu_type = HAL_IMU_TYPE;
+    hdr.device_model = HAL_DEVICE_MODEL;
+    hdr.lsb_per_g = (float)(32768.0f / (float)RANGE_G);
+    hdr.lsb_per_dps = (float)(32768.0f / (float)GYRO_RANGE_DPS);
     hdr.total_samples = 0xFFFFFFFF;
     hdr.dropped_samples = 0;
     logFile.seek(0);
@@ -223,11 +235,11 @@ void stop_logging() {
 }
 
 void setup() {
-    M5.begin();
+    hal_begin();
     WiFi.mode(WIFI_OFF);
     esp_wifi_stop();
     btStop();
-    M5.Lcd.setRotation(3);
+    hal_lcd().setRotation(3);
     // Enlarge UART buffers to improve dump throughput (ESP32 HardwareSerial)
     #if defined(ARDUINO_ARCH_ESP32)
     Serial.setTxBufferSize(1024);
@@ -239,11 +251,12 @@ void setup() {
     lcd_show_state();
     screen_on = true;
     screen_on_until_ms = millis() + 5000; // initial wake period
+    last_idle_ms = millis();
     delay(1000); // 待機しないとserialが不安定になる
 }
 
 void loop() {
-    M5.update();
+    hal_update();
     // State: handle calibration-first workflow
     static bool calib_pending = false;
     static uint32_t calib_due_ms = 0;
@@ -252,23 +265,23 @@ void loop() {
     //  - Before first calibration: schedule calibration after CALIB_DELAY_SEC
     //  - After calibration: toggle recording
     const uint32_t LONG_MS = 800;
-    if (M5.BtnA.wasReleasefor(LONG_MS)) {
+    if (hal_btn_long(LONG_MS)) {
         if (!imu_is_calibrated()) {
             calib_pending = true;
             calib_due_ms = millis() + (uint32_t)CALIB_DELAY_SEC * 1000UL;
             screen_set(true);
-            M5.Lcd.fillScreen(TFT_BLACK);
-            M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-            M5.Lcd.setCursor(0, 0);
-            M5.Lcd.print("Calibration scheduled\n");
-            M5.Lcd.printf("Starting in %us...\n", (unsigned)CALIB_DELAY_SEC);
-            M5.Lcd.print("Keep device still");
+            hal_lcd().fillScreen(TFT_BLACK);
+            hal_lcd().setTextColor(TFT_WHITE, TFT_BLACK);
+            hal_lcd().setCursor(0, 0);
+            hal_lcd().print("Calibration scheduled\n");
+            hal_lcd().printf("Starting in %us...\n", (unsigned)CALIB_DELAY_SEC);
+            hal_lcd().print("Keep device still");
         } else {
             if (recording) stop_logging();
             else start_logging();
             ui_wake_for(10000);
         }
-    } else if (M5.BtnA.wasReleased()) {
+    } else if (hal_btn_short_released()) {
         // Short press
         ui_wake_for(10000);
     }
@@ -286,6 +299,10 @@ void loop() {
         if (imu_is_calibrated() && now_ms - last_lcd_ms >= 1000) {
             last_lcd_ms = now_ms;
             lcd_draw_fs_usage();
+        }
+        // Auto power-off if idle (not recording, not dumping) for 10 minutes
+        if ((now_ms - last_idle_ms) > 10UL * 60UL * 1000UL) {
+            hal_power_off();
         }
         // Auto screen off
         if (screen_on && (int32_t)(millis() - screen_on_until_ms) > 0) {

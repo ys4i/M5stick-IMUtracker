@@ -1,7 +1,8 @@
 import argparse
 from pathlib import Path
 
-from serial_common import list_serial_ports, dump_bin
+from serial_common import list_serial_ports, dump_bin, get_info
+from info_format import format_info_line
 import decoder
 
 
@@ -12,6 +13,12 @@ def dump_one(port: str, out_dir: Path, do_csv: bool):
     def cb(read_bytes, total_bytes):
         pct = 100 * read_bytes / total_bytes if total_bytes else 0
         print(f'\r{pct:5.1f}% ({read_bytes}/{total_bytes}B)', end='', flush=True)
+    # Log INFO before dump
+    try:
+        info = get_info(port)
+        print(f'INFO: {format_info_line(info)}')
+    except Exception as exc:
+        print(f'INFO failed: {exc}')
     meta = dump_bin(port, out_file, progress_cb=cb)
     baud = meta.get('baud') if isinstance(meta, dict) else None
     print(f"\nDONE" + (f" (baud={baud})" if baud else ""))

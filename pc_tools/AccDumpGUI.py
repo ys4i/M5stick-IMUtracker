@@ -8,6 +8,7 @@ import sys
 
 from serial_common import list_serial_ports, dump_bin, get_info
 import decoder
+from info_format import format_info_line
 
 
 class AccDumpGUI(tk.Tk):
@@ -72,6 +73,7 @@ class AccDumpGUI(tk.Tk):
             try:
                 self._append_log('INFO問い合わせ開始')
                 info = get_info(port, log_cb=self._append_log)
+                self._append_log(format_info_line(info))
                 odr = int(info.get('odr', 200))
                 fs_total = int(info.get('fs_total', 0))
                 fs_used = int(info.get('fs_used', 0))
