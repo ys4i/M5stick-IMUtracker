@@ -7,6 +7,14 @@
 #include <Arduino.h>
 #include "config.h"
 
+// 利用可能なら M5Unified 由来の定義 (IMUアドレスやピン名) を参照する
+#if __has_include(<M5Unified.h>)
+  #include <M5Unified.h>
+  #define HAS_M5UNIFIED 1
+#else
+  #define HAS_M5UNIFIED 0
+#endif
+
 // --- IMU種別ID ---
 #define IMU_TYPE_UNKNOWN 0
 #define IMU_TYPE_SH200Q 1
@@ -105,9 +113,9 @@ static bool s_touch_released = false;
 inline void hal_update() {
     M5.update();
 #if !HAL_IMU_IS_SH200Q
-    M5.Touch.update();
-    bool pressed = M5.Touch.isPressed();
     uint32_t now = millis();
+    M5.Touch.update(now);
+    bool pressed = M5.Touch.getDetail().isPressed();
     if (pressed && !s_touch_prev) {
         s_touch_down_ms = now;
         s_touch_released = false;
@@ -153,5 +161,40 @@ inline auto& hal_lcd() {
     return M5.Lcd;
 #else
     return M5.Display;
+#endif
+}
+
+// --- I2Cピン/IMUアドレス取得 (M5Unifiedのデフォルトに揃える) ---
+inline uint8_t hal_imu_addr() {
+#if HAL_IMU_IS_SH200Q
+    return 0x6C; // SH200Q default (M5Unifiedと同じ)
+#else
+    return 0x68; // MPU6886 default
+#endif
+}
+
+inline int hal_i2c_sda_pin() {
+#if HAL_IMU_IS_SH200Q
+    return SDA;
+#else
+  int pin = M5.getPin(m5::pin_name_t::in_i2c_sda);
+  return (pin >= 0) ? pin : SDA;
+#endif
+}
+
+inline int hal_i2c_scl_pin() {
+#if HAL_IMU_IS_SH200Q
+    return SCL;
+#else
+  int pin = M5.getPin(m5::pin_name_t::in_i2c_scl);
+  return (pin >= 0) ? pin : SCL;
+#endif
+}
+
+inline const char* hal_i2c_bus_name() {
+#if HAL_IMU_IS_SH200Q
+    return "Wire1";
+#else
+    return "In_I2C";
 #endif
 }

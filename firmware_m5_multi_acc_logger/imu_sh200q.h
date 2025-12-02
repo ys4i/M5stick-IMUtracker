@@ -3,14 +3,12 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
+#include "board_hal.h"
 
 // Minimal SH200Q access. We avoid M5.IMU read helpers to keep readings raw
 // and prevent any library-side auto-calibration from altering values.
 
-// SH200Q register map (7-bit address 0x6C)
-#ifndef SH200I_ADDRESS
-#define SH200I_ADDRESS     0x6C
-#endif
+// SH200Q register map (7-bit address from M5Unified defaults)
 #define SH200I_ACC_CONFIG  0x0E
 #define SH200I_GYRO_CONFIG 0x0F
 #define SH200I_GYRO_DLPF   0x11
@@ -19,27 +17,27 @@
 #define SH200I_GYRO_RANGE  0x2B
 
 inline void sh200q_write(uint8_t reg, uint8_t val) {
-    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.beginTransmission(hal_imu_addr());
     Wire1.write(reg);
     Wire1.write(val);
     Wire1.endTransmission();
 }
 
 inline uint8_t sh200q_read_u8(uint8_t reg) {
-    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.beginTransmission(hal_imu_addr());
     Wire1.write(reg);
     Wire1.endTransmission(false);
-    Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)1);
+    Wire1.requestFrom(hal_imu_addr(), (uint8_t)1);
     if (Wire1.available()) return Wire1.read();
     return 0;
 }
 
 inline void sh200q_read_xyz16(uint8_t start_reg, int16_t& x, int16_t& y, int16_t& z) {
     uint8_t buf[6] = {0};
-    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.beginTransmission(hal_imu_addr());
     Wire1.write(start_reg);
     Wire1.endTransmission(false);
-    Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)6);
+    Wire1.requestFrom(hal_imu_addr(), (uint8_t)6);
     for (int i = 0; i < 6 && Wire1.available(); ++i) buf[i] = Wire1.read();
     x = (int16_t)((buf[1] << 8) | buf[0]);
     y = (int16_t)((buf[3] << 8) | buf[2]);

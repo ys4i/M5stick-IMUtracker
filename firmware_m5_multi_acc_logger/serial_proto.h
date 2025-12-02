@@ -18,14 +18,11 @@ extern bool recording;
 #if HAL_IMU_IS_SH200Q
 // --- IMU register dump helpers (SH200Q) ---
 // These are inline to keep header-only and avoid separate TU.
-#ifndef SH200I_ADDRESS
-#define SH200I_ADDRESS 0x6C
-#endif
 inline uint8_t _sh200q_read_u8(uint8_t reg) {
-    Wire1.beginTransmission(SH200I_ADDRESS);
+    Wire1.beginTransmission(hal_imu_addr());
     Wire1.write(reg);
     Wire1.endTransmission(false);
-    Wire1.requestFrom(SH200I_ADDRESS, (uint8_t)1);
+    Wire1.requestFrom(hal_imu_addr(), (uint8_t)1);
     if (Wire1.available()) return Wire1.read();
     return 0xFF;
 }
@@ -138,6 +135,18 @@ inline void serial_proto_poll() {
     } else if (cmd == "STOP") {
         if (recording) stop_logging();
         Serial.println("OK");
+    } else if (cmd == "I2CSCAN") {
+        Serial.println("I2C scan start");
+        for (uint8_t addr = 3; addr < 0x78; ++addr) {
+            Wire.beginTransmission(addr);
+            uint8_t err = Wire.endTransmission();
+            if (err == 0) {
+                Serial.printf("I2C found: 0x%02X\n", addr);
+            } else if (err == 4) {
+                Serial.printf("I2C unknown error at 0x%02X\n", addr);
+            }
+        }
+        Serial.println("I2C scan done");
     } else if (cmd == "REGS") {
 #if HAL_IMU_IS_SH200Q
         uint8_t r0E = _sh200q_read_u8(0x0E);
@@ -162,13 +171,26 @@ inline void serial_proto_poll() {
             if (Wire.available()) return Wire.read();
             return 0xFF;
         };
+        auto mpu_whoami = [&]() {
+            Wire.beginTransmission(MPU6886_ADDR);
+            Wire.write(0x75);
+            Wire.endTransmission(false);
+            Wire.requestFrom((int)MPU6886_ADDR, 1);
+            if (Wire.available()) return Wire.read();
+            return 0xFF;
+        };
+        Wire.beginTransmission(MPU6886_ADDR);
+        int ack = Wire.endTransmission();
         uint8_t cfg = mpu_read(MPU6886_REG_CONFIG);
         uint8_t smpl = mpu_read(MPU6886_REG_SMPLRT_DIV);
         uint8_t gcfg = mpu_read(MPU6886_REG_GYRO_CONFIG);
         uint8_t acfg = mpu_read(MPU6886_REG_ACCEL_CONFIG);
+        uint8_t a2 = mpu_read(MPU6886_REG_ACCEL_CONFIG2);
+        uint8_t pm1 = mpu_read(MPU6886_REG_PWR_MGMT_1);
+        uint8_t pm2 = mpu_read(MPU6886_REG_PWR_MGMT_2);
         Serial.printf(
-            "REGS CONFIG=0x%02X SMPLRT_DIV=%u GYRO_CONFIG=0x%02X ACCEL_CONFIG=0x%02X\n",
-            cfg, smpl, gcfg, acfg
+            "REGS ACK=%d CONFIG=0x%02X SMPLRT_DIV=%u GYRO_CONFIG=0x%02X ACCEL_CONFIG=0x%02X ACCEL_CONFIG2=0x%02X PWR_MGMT_1=0x%02X PWR_MGMT_2=0x%02X WHOAMI=0x%02X\n",
+            ack, cfg, smpl, gcfg, acfg, a2, pm1, pm2, mpu_whoami()
         );
 #endif
     } else {

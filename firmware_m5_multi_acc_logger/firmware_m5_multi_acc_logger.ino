@@ -1,4 +1,4 @@
-// Build Marker: 2025-09-15 11:24:10 (Local, Last Updated)
+// Build Marker: 2025-12-02 16:02:00 (Local, Last Updated)
 // Note: Update this timestamp whenever agents modifies this file.
 
 #include <LittleFS.h>
@@ -22,6 +22,9 @@ static uint8_t ring_buf[4096];
 static size_t ring_pos = 0;
 static uint32_t total_samples = 0;
 static uint32_t last_idle_ms = 0; // for auto power-off when idle
+static int16_t dbg_ax = 0, dbg_ay = 0, dbg_az = 0;
+static int16_t dbg_gx = 0, dbg_gy = 0, dbg_gz = 0;
+static bool dbg_has_sample = false;
 
 // forward declaration for serial protocol
 void start_logging();
@@ -48,27 +51,62 @@ struct __attribute__((packed)) LogHeader {
     uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 2 - 2 - 2 - 4 - 4 - 4 - 4];
 };
 
-void lcd_show_state() {
-    if (recording) {
-        hal_lcd().fillScreen(TFT_RED);
-        hal_lcd().setCursor(0, 0);
-        hal_lcd().setTextColor(TFT_WHITE);
-        hal_lcd().print("REC");
-        return;
+void lcd_draw_debug_overlay(uint16_t bg) {
+    if (!DEBUG_MODE) return;
+    const int margin = 2;
+    const int bar_h = 8;
+    const int bar_y = hal_lcd().height() - bar_h - margin;
+    int line_h = hal_lcd().fontHeight();
+    if (line_h <= 0) line_h = 16;
+    const int line_gap = 2;
+    const int lines = 4;
+    const int overlay_h = lines * line_h + line_gap * (lines - 1);
+    int y = bar_y - overlay_h - margin;
+    if (y < 0) y = 0;
+    hal_lcd().fillRect(0, y, hal_lcd().width(), overlay_h, bg);
+    hal_lcd().setTextColor(TFT_YELLOW, bg);
+    hal_lcd().setCursor(0, y);
+#if HAL_IMU_IS_SH200Q
+    const char* imu_name = "SH200Q";
+    const uint8_t imu_addr = hal_imu_addr();
+    const char* bus_name = hal_i2c_bus_name();
+#else
+    const char* imu_name = "MPU6886";
+    const uint8_t imu_addr = hal_imu_addr();
+    const char* bus_name = hal_i2c_bus_name();
+#endif
+    hal_lcd().printf("IMU:%s 0x%02X %s", imu_name, imu_addr, bus_name);
+    hal_lcd().setCursor(0, y + line_h + line_gap);
+    hal_lcd().printf("SDA:%d SCL:%d cal:%c rec:%c", hal_i2c_sda_pin(), hal_i2c_scl_pin(), imu_is_calibrated() ? 'Y' : 'N', recording ? 'Y' : 'N');
+    hal_lcd().setCursor(0, y + (line_h + line_gap) * 2);
+    if (dbg_has_sample) {
+        hal_lcd().printf("ax:%d ay:%d az:%d", dbg_ax, dbg_ay, dbg_az);
+    } else {
+        hal_lcd().print("ax:-- ay:-- az:--");
     }
-    if (!imu_is_calibrated()) {
-        hal_lcd().fillScreen(TFT_BLACK);
-        hal_lcd().setCursor(0, 0);
-        hal_lcd().setTextColor(TFT_WHITE, TFT_BLACK);
+    hal_lcd().setCursor(0, y + (line_h + line_gap) * 3);
+    if (dbg_has_sample) {
+        hal_lcd().printf("gx:%d gy:%d gz:%d", dbg_gx, dbg_gy, dbg_gz);
+    } else {
+        hal_lcd().print("gx:-- gy:-- gz:--");
+    }
+}
+
+void lcd_show_state() {
+    uint16_t bg = recording ? TFT_RED : TFT_BLACK;
+    hal_lcd().fillScreen(bg);
+    hal_lcd().setCursor(0, 0);
+    hal_lcd().setTextColor(TFT_WHITE, bg);
+    if (recording) {
+        hal_lcd().print("REC");
+    } else if (!imu_is_calibrated()) {
         hal_lcd().print("CALIBRATION STANDBY\n");
         hal_lcd().print("Hold button to start\n");
         hal_lcd().printf("Starts %us after hold\n", (unsigned)CALIB_DELAY_SEC);
-        return;
+    } else {
+        hal_lcd().print("IDLE");
     }
-    hal_lcd().fillScreen(TFT_BLACK);
-    hal_lcd().setCursor(0, 0);
-    hal_lcd().setTextColor(TFT_WHITE);
-    hal_lcd().print("IDLE");
+    lcd_draw_debug_overlay(bg);
 }
 
 void lcd_draw_fs_usage() {
@@ -129,6 +167,7 @@ void lcd_draw_fs_usage() {
     if (fill_w > 0) {
         hal_lcd().fillRect(bar_x, bar_y, fill_w, bar_h, TFT_RED);
     }
+    lcd_draw_debug_overlay(bg);
 }
 
 // Screen power/brightness control helpers
@@ -246,8 +285,15 @@ void setup() {
     Serial.setRxBufferSize(1024);
     #endif
     Serial.begin(SERIAL_BAUD);
-    fs_init();
-    imu_init();
+    bool fs_ok = fs_init();
+    Serial.printf(
+        "BOOT fs_ok:%d total:%u used:%u imu_type:%u addr:0x%02X bus:%s SDA:%d SCL:%d\n",
+        (int)fs_ok, (unsigned)fs_total_bytes(), (unsigned)fs_used_bytes(),
+        (unsigned)HAL_IMU_TYPE, (unsigned)hal_imu_addr(), hal_i2c_bus_name(),
+        hal_i2c_sda_pin(), hal_i2c_scl_pin()
+    );
+    bool imu_ok = imu_init();
+    Serial.printf("IMU_INIT %d\n", (int)imu_ok);
     lcd_show_state();
     screen_on = true;
     screen_on_until_ms = millis() + 5000; // initial wake period
@@ -333,6 +379,17 @@ void loop() {
     int16_t ax, ay, az, gx, gy, gz;
     if (!imu_read_accel_raw(ax, ay, az)) return;
     if (!imu_read_gyro_raw(gx, gy, gz)) return;
+    dbg_ax = ax; dbg_ay = ay; dbg_az = az;
+    dbg_gx = gx; dbg_gy = gy; dbg_gz = gz;
+    dbg_has_sample = true;
+    if (DEBUG_MODE) {
+        static uint32_t last_dbg_ms = 0;
+        uint32_t now_ms = millis();
+        if (now_ms - last_dbg_ms >= DEBUG_RAW_PRINT_INTERVAL_MS) {
+            last_dbg_ms = now_ms;
+            Serial.printf("DBG_RAW ax:%d ay:%d az:%d gx:%d gy:%d gz:%d\n", ax, ay, az, gx, gy, gz);
+        }
+    }
     // Write big-endian (MSB first) like accel
     ring_buf[ring_pos++] = ax >> 8; ring_buf[ring_pos++] = ax & 0xFF;
     ring_buf[ring_pos++] = ay >> 8; ring_buf[ring_pos++] = ay & 0xFF;

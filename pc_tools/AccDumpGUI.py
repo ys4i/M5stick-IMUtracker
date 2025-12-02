@@ -5,6 +5,8 @@ from pathlib import Path
 import traceback
 import subprocess
 import sys
+import errno
+import serial
 
 from serial_common import list_serial_ports, dump_bin, get_info
 import decoder
@@ -67,6 +69,23 @@ class AccDumpGUI(tk.Tk):
         self.log.insert(tk.END, msg + '\n')
         self.log.see(tk.END)
 
+    def _is_busy_serial_error(self, exc: Exception) -> bool:
+        msg = str(exc)
+        err = getattr(exc, 'errno', None)
+        return err in (errno.EBUSY, 16) or 'device or resource busy' in msg.lower() or 'device is busy' in msg.lower()
+
+    def _warn_busy_port(self, port: str, exc: Exception):
+        msg = str(exc)
+        advice = (
+            f'{port} を開けませんでした。他のプロセスが使用中の可能性があります。\n'
+            'Arduino IDE のシリアルモニタ、screen/minicom/picocom を閉じてください。\n'
+            "占有プロセス確認: lsof /dev/ttyUSB* または fuser /dev/ttyUSB*"
+        )
+        self._append_log(f'ポートが使用中: {msg}')
+        self._append_log(advice.replace('\n', ' '))
+        # TkのメッセージボックスはUIスレッドで呼ぶ
+        self.after(0, lambda: messagebox.showwarning('ポートが使用中', f'{msg}\n\n{advice}'))
+
     def _dump_worker(self, port: str, out_dir: Path):
         try:
             # Query INFO and log FS usage + estimated remaining time
@@ -99,6 +118,11 @@ class AccDumpGUI(tk.Tk):
                     self._append_log(f'INFO成功: baud={info["baud"]}')
                 if has_head is not None:
                     self._append_log(f'has_head={has_head}')
+            except serial.SerialException as e:
+                if self._is_busy_serial_error(e):
+                    self._warn_busy_port(port, e)
+                    return
+                self._append_log(f'INFO取得失敗: {e}')
             except Exception as e:
                 self._append_log(f'INFO取得失敗: {e}')
             out_file = out_dir / 'ACCLOG.bin'
@@ -115,7 +139,13 @@ class AccDumpGUI(tk.Tk):
                 if pct != last_logged_pct['p']:
                     last_logged_pct['p'] = pct
                     self._append_log(f'進捗: {pct}% ({read_bytes}/{total_bytes}B)')
-            meta = dump_bin(port, out_file, progress_cb=cb, log_cb=self._append_log)
+            try:
+                meta = dump_bin(port, out_file, progress_cb=cb, log_cb=self._append_log)
+            except serial.SerialException as e:
+                if self._is_busy_serial_error(e):
+                    self._warn_busy_port(port, e)
+                    return
+                raise
             self._append_log(f'DUMP完了: {out_file}')
 
             # 推定開始時刻でファイル名をリネーム（補正なしB案）

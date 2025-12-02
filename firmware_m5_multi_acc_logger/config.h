@@ -13,6 +13,10 @@ constexpr uint16_t RANGE_G = 8;
 constexpr uint16_t GYRO_RANGE_DPS = 2000;
 // Log file name stored in LittleFS
 constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
+// Enable on-device debug overlay (IMU/I2C info) on LCD
+constexpr bool DEBUG_MODE = false;
+// Interval for Serial debug printing of raw IMU data when DEBUG_MODE is true (milliseconds)
+constexpr uint32_t DEBUG_RAW_PRINT_INTERVAL_MS = 200;
 // Serial baud rate for communication
 // High-speed for faster dump. Stable values on ESP32/CP210x: 921600 or 1500000.
 constexpr unsigned long SERIAL_BAUD = 115200;
