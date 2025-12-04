@@ -1,20 +1,29 @@
 # m5stick\_multi\_imu\_logger.md
 
-**目的**: 複数台の **M5StickC 系**（C / C PLUS / C PLUS2）で**内蔵IMUの加速度**を記録し、**計測後にPCへUSB有線で吸い出す**。
+**目的**: 複数台の **M5StickC 系**（C / C PLUS / C PLUS2）で**内蔵IMUの加速度＋ジャイロ（6軸）**を記録し、**計測後にPCへUSB有線で吸い出す**。
 **開発条件**: **Arduino IDE で書き込み**。データ吸い出しツールは**初心者向けGUI**（macOS/Windows対応）。
 
 ---
 
 ## ゴール / 受入基準（Acceptance Criteria）
 
-1. 各M5が**内蔵IMU加速度3軸・int16（6B/サンプル）**を**一定ODR**でロギング。
+1. 各M5が**内蔵IMU 6軸（加速度＋ジャイロ）・int16**を**一定ODR**でロギング（v1互換で加速度のみ6B/サンプル、v2デフォルトは12B/サンプル）。
 2. 記録は\*\*デバイス内Flash（LittleFS）\*\*に単一ファイルとして保存（ヘッダ+生データ）。
 3. PC側GUIツールから**USBシリアル経由でワンクリック吸い出し**できる（macOS/Windows）。
-4. `.bin → .csv` 変換機能をGUI内で提供（列：`n, t_sec, ax_g, ay_g, az_g`）。
+4. `.bin → .csv` 変換機能をGUI内で提供（列：v1= `n, t_sec, ax_g, ay_g, az_g` / v2= ジャイロ列を追加）。
 5. 10分連続記録時の**実効ODR誤差 ≤ ±1%**、**サンプル数の欠落0**（ログに0件）。
 6. 4MB機で約**1.5MB**の実効データ領域（デフォルトパーティション）。PLUS2（8MB）では**\~4–6MB**を確保（後述の簡易切替で実現）。
 
-> デフォルト想定：**ODR=200 Hz**, **±4 g**, **加速度のみ**。必要に応じ`config.h`で変更。
+> 最新方針反映（2025-01, docのみ更新）
+> - ボード判定は `agents/arduinoide_board.md` を参照し、マクロベースで自動切替。該当しない場合はビルドエラーとする。
+> - Plus2 の IMU は **MPU6886 で確定**。既定値は **ODR 200 Hz / 加速度 ±8 g / ジャイロ ±2000 dps / DLPF off / 115200bps** に統一。
+> - 全ボードでヘッダ **0x0201 をデフォルト書き込み**。0x0200 は読取後方互換のみ維持。
+> - BtnA: 短押し=ウェイク、長押し=録画トグル＋長押し中ジャイロキャリブを共通化。画面回転なし。未記録10分＆非DUMP時は自動電源OFF。
+> - パーティション: Plus2向けは `tools/partitions_plus2_8mb.csv`（app0 1.5MB / LittleFS 5.5MB）を推奨、フォールバックに No OTA 1MB/3MB。Core2 16MB CSV も併記。
+> - PCツール: INFO/DUMP表示に board/imu/format/lsb_per_* を追加（JP/EN混在可）。デコーダはヘッダの lsb_per_g / lsb_per_dps を最優先し、無い場合のみ従来スケールにフォールバック。実機テストはユーザー側で実施。
+> - ドキュメントは README/README_AccDump へ Plus2 追記を簡潔に。Build Marker 運用（`firmware_m5_multi_acc_logger.ino` 先頭コメントの秒精度更新）は継続。
+
+> デフォルト想定：**ODR=200 Hz**, **加速度 ±8 g**, **ジャイロ ±2000 dps**, **DLPF off**。必要に応じ`config.h`で変更。
 
 ---
 
@@ -58,7 +67,7 @@
 * **対象ボード**：
 
   * M5StickC：`M5Stick-C`（または`ESP32 PICO Kit`系でも可）
-  * M5StickC PLUS / PLUS2：対応ボードを選択（`board listall`参照）
+  * M5StickC PLUS / PLUS2：対応ボードを選択（`board listall`参照）。**判定マクロは `agents/arduinoide_board.md` に従う**（`ARDUINO_` + `build.board`）。
   * M5Stack Core2：`M5Stack-Core2` 等、M5Unified が利用できるボードを選択
 * **ライブラリ**：
 
@@ -68,21 +77,22 @@
 ### IMUドライバ方針
 
 - SH200Q 搭載デバイス（StickC系のSH200Qモデルなど）は、再現性と既知不具合回避のためレジスタ直叩きで ODR/レンジ/DLPF を設定し、生の int16 を取得する（`imu_sh200q.h`）。`M5.IMU.get*` は内部スケーリング・自動キャリブが入るため使用しない。
-- SH200Q 以外のIMU（例: MPU6886 搭載の Core2 や将来の非SH200Q Stick 系）は、M5Unified（公式ライブラリ）経由の設定・取得を採用する。
-- ヘッダ 0x0201 では `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録し、PC側デコーダはこのメタを用いてスケーリングする（0x0200との後方互換あり）。
+- SH200Q 以外のIMU（例: **MPU6886 搭載の Core2 / Plus2**、将来の非SH200Q Stick 系）は、M5Unified（公式ライブラリ）経由の設定・取得を採用する。
+- **ヘッダ 0x0201 を標準化**し、`imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録。PC側デコーダはこのメタを優先してスケーリングする（0x0200 への後方互換読み取りのみ）。
 - メンテナンス上、SH200Q側は将来の M5.IMU 実装変更に備え、必要ならレジスタ再設定を継続する。
 
 ### 2) 記録仕様
 
-* **センサ**：内蔵IMU（MPU6886相当）**加速度のみ**。
+* **センサ**：内蔵IMU（MPU6886/SH200Q）**加速度＋ジャイロ**。Plus2 は MPU6886 を前提。
 * **ODR**：`config.h`で 100 / 200 / 400 / 1000 Hz から選択（デフォルト200 Hz）。
-* **フルスケール**：±2/4/8/16 g（デフォルト±4 g）。
-* **LPF/DLPF**：固定（`config.h`に定数、解析一貫性維持）。
+* **フルスケール**：加速度 ±2/4/8/16 g（**デフォルト±8 g**）。
+* **ジャイロレンジ**：±250/500/1000/2000 dps（**デフォルト±2000 dps**）。
+* **LPF/DLPF**：デフォルト off（必要なら 50/92Hz を指定）。
 * **取得方式**：タイマ駆動ポーリング（割り込み未配線機でも安定）。
 * **記録形式（LittleFS, 単一ファイル）**：
 
-  * 先頭64Bヘッダ
-  * 以降 `int16 ax, ay, az` が連結（タイムスタンプは保存せず、`n/ODR`で復元）
+  * 先頭64Bヘッダ（0x0201 をデフォルト書き込み）
+  * v1: `int16 ax, ay, az` が連結 / v2: `int16 ax, ay, az, gx, gy, gz` が連結（タイムスタンプは保存せず、`n/ODR`で復元）
 * **ファイル名**：`ACCLOG.BIN`（新規記録時に上書き確認あり）。
 * **開始/停止**：ボタンA短押しでトグル。LCDに状態表示（REC / IDLE / 残容量）。
 * **保護**：満容量時は自動停止し、LCDに通知。
@@ -90,7 +100,7 @@
 
 ### 3) シリアルプロトコル（簡易）
 
-* ボーレート：**921600 bps**（高速転送）
+* ボーレート：**115200 bps を既定**（PCツールは 1500000→115200 の順で自動判別）
 * コマンド（テキスト）
 
   * `PING` → `PONG\n`
@@ -103,9 +113,9 @@
 ### 4) パーティション
 
 * **4MB機（C / C PLUS）**：Arduino既定の「Default 4MB with spiffs」を前提（実効データ領域 ≈1.5MB）。
-* **8MB機（PLUS2）**：`partitions_8MB.csv`を同梱（初心者でもIDEの「Partition Scheme」から選択できる形に）。
-
-  * 例：`app0: 2MB, spiffs(littlefs): 5MB` など
+* **8MB機（PLUS2）**：`tools/partitions_plus2_8mb.csv` を同梱（推奨: app0 約1.5MB / LittleFS 約5.5MB）。
+  * フォールバック：IDE既定の「No OTA (1MB APP / 3MB SPIFFS)」を README に記載。
+* **Core2（16MB想定）**：`tools/partitions_core2_16mb.csv` を推奨（No OTA 2MB / LittleFS 13MB 目安）。
 
 ---
 
@@ -114,19 +124,22 @@
 **ヘッダ（64B固定）**
 
 * `magic[8]` : `"ACCLOG\0"`
-* `format_ver` : `uint16`（例 0x0100）
+* `format_ver` : `uint16`（v1:0x0100, v2:0x0200, 拡張:0x0201）
 * `device_uid` : `uint64`
 * `start_unix_ms` : `uint64`（0可；未利用時）
 * `odr_hz` : `uint16`
 * `range_g` : `uint16`
+* `gyro_range_dps` : `uint16`（v2以降）
+* `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` : 0x0201 で追加（旧reserved内）
 * `total_samples` : `uint32`（停止時に追記、収集中は0xFFFFFFFF）
 * `dropped_samples` : `uint32`
 * `reserved[...]` : ゼロ埋め（合計64Bに揃える）
 
 **データ部**
 
-* 連続配列：`[ax int16][ay int16][az int16] ...`
-* 物理量変換：`g = raw / LSB_PER_G`（±4 g 時のLSBは`config.h`に定義）
+* v1: `int16` の `[ax][ay][az] ...`
+* v2+: `int16` の `[ax][ay][az][gx][gy][gz] ...`
+* 物理量変換：`g = raw / lsb_per_g`、`dps = raw / lsb_per_dps`（ヘッダ0x0201を優先。無い場合は range から従来計算）
 
 ---
 
@@ -263,8 +276,8 @@
 
 ## 既定値と変更点
 
-* 既定：**ODR=200 Hz**, **±4 g**, **加速度のみ**, **単一ファイル方式**, **LittleFS**。
-* 変更は\*\*`config.h`\*\*の定数で可能（ODR, RANGE, ファイル名, ボーレート）。
+* 既定：**ODR=200 Hz**, **加速度 ±8 g**, **ジャイロ ±2000 dps**, **DLPF off**, **115200bps**, **単一ファイル方式**, **LittleFS**。ヘッダは **0x0201** をデフォルト書き込み。
+* 変更は\*\*`config.h`\*\*の定数で可能（ODR, RANGE, DLPF, ファイル名, ボーレート）。
 
 ---
 
@@ -279,7 +292,7 @@
 
 ## （任意）将来拡張
 
-* 6軸対応（ジャイロ追加; 12B/サンプル）
+* 6軸対応（ジャイロ追加; 12B/サンプル） ※現行は6軸デフォルト
 * 複数ファイルローテーション／日付別保存
 * PCからの**遠隔START/STOP**（USB接続中に操作）
 * 圧縮（差分+LZ4）で容量倍増を狙う

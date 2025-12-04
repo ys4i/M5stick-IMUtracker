@@ -3,8 +3,8 @@
 PC-side utilities for extracting accelerometer/gyroscope logs from M5Stick and M5Stack Core2 devices.
 
 Note: Tools auto-detect baud from a fast-to-slow list
-([1500000, 921600, 460800, 230400, 115200]). Use the latest firmware
-to enable high-speed dump; default firmware baud is set to 1500000.
+([1500000, 921600, 460800, 230400, 115200]). Default firmware baud is
+**115200**; the auto-probe will fall back accordingly.
 
 ## GUI Usage
 
@@ -21,7 +21,7 @@ to enable high-speed dump; default firmware baud is set to 1500000.
 4. If *CSVへ変換* is checked, a `.csv` file will be produced next to the
    downloaded `ACCLOG.bin`.
 
-The log window shows the selected baud rate when connected. INFO output includes board/IMU/format and LSB metadata when firmware >=0x0201.
+The log window shows the selected baud rate when connected. INFO output includes board/IMU/format and LSB metadata (0x0201 default).
 
 ## CLI Usage
 
@@ -49,4 +49,4 @@ The CSV file contains columns:
 - v2+ logs (firmware 0x0200+): adds `gx_dps`, `gy_dps`, `gz_dps`
 
 The decoder auto-detects the format version from the 64-byte header and
-parses accordingly. Scaling uses header metadata: `gyro_range_dps` (0x0200) and, if present (0x0201), `lsb_per_g` / `lsb_per_dps` and `imu_type`.
+parses accordingly. Scaling uses header metadata: `lsb_per_g` / `lsb_per_dps` and `imu_type` (0x0201, default), or falls back to `gyro_range_dps` and legacy values when absent.

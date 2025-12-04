@@ -9,7 +9,8 @@ M5Stick 系および M5Stack Core2 デバイスで IMU（加速度・ジャイ�
 - ファームウェアは64バイトのヘッダ＋生データのシンプルなログ形式で `/ACCLOG.BIN` に記録します。
 - PCツール（GUI/CLI）はシリアル経由で `ACCLOG.BIN` をダウンロードし、必要に応じてCSVへ変換します。
 - 新ファーム（v2/0x0200）は加速度＋ジャイロを同時記録。旧ログ（加速度のみ v1/0x0100）も自動判別して対応します。
-- 拡張ヘッダ（0x0201）では IMU 種別/機種 ID/スケール情報を含み、Core2 など M5Unified 利用ボードでもスケーリングをメタ経由で正しく行います。
+- 拡張ヘッダ（0x0201）をデフォルトで書き込み、IMU 種別/機種 ID/スケール情報を含める（M5Unified 利用ボードでもメタ経由で正しくスケーリング）。
+- デフォルト設定: **ODR 200 Hz / 加速度 ±8 g / ジャイロ ±2000 dps / DLPF off / 115200bps**。
 
 特長
 ----
@@ -23,7 +24,7 @@ IMUドライバ方針（IMU別）
 --------------------
 
 - SH200Q 搭載デバイス（StickC系のSH200Qモデルなど）は既知の挙動差・スケールばらつき回避のため、`imu_sh200q.h` でレジスタ直叩きし、生の int16 を記録する。
-- それ以外のIMU（例: MPU6886 搭載の Core2 や Stick 系バリエーション）は不具合なしとみなし、M5Unified（公式ライブラリ）経由の設定・取得を採用する。ヘッダ 0x0201 に `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録し、PC側で正しくスケーリングする。
+- それ以外のIMU（例: **MPU6886 搭載の Core2 / StickC Plus2**、将来の非SH200Q Stick 系）は不具合なしとみなし、M5Unified（公式ライブラリ）経由の設定・取得を採用する。ヘッダ 0x0201 に `imu_type` / `device_model` / `lsb_per_g` / `lsb_per_dps` を記録し、PC側で正しくスケーリングする。
 - いずれもデバイス内後処理を最小化し、PC側で統一解析する方針。将来的にライブラリ側で生値取得が安定した場合は再評価する。
 
 対応ハードウェア
@@ -51,17 +52,20 @@ IMUドライバ方針（IMU別）
 
 パーティション設定（重要）
 - Arduino IDE メニューの「ツール」→「Partition Scheme」で、次を推奨します。
+  - StickC Plus2（8MB想定）: `tools/partitions_plus2_8mb.csv`（APP 約1.5MB / LittleFS 約5.5MB 目安）
   - Core2（16MB想定）: 同梱 `tools/partitions_core2_16mb.csv` の No OTA (APP 2MB / LittleFS 13MB 目安)
-  - StickC 系ほか容量不明: `No OTA (1MB APP/3MB SPIFFS)` をフォールバック選択
+  - 上記が選べない場合のフォールバック: `No OTA (1MB APP/3MB SPIFFS)`
 - この設定によりフラッシュをファイルシステム（LittleFS領域）に広く割り当てます。表示名は「SPIFFS」ですが、実装は LittleFS を使用します（同一FS領域を共有）。
 
 設定（`config.h`）
-- `ODR_HZ` サンプリングレート（例: 128 Hz、SH200Qの対応値に自動丸め）
-- `RANGE_G` 加速度レンジ（2/4/8/16 g）
-- `GYRO_RANGE_DPS` ジャイロレンジ（250/500/1000/2000 dps、既定2000）
-- `SERIAL_BAUD` シリアル速度（既定 115200）
+- `ODR_HZ` サンプリングレート（デフォルト 200 Hz、デバイスごとの対応値に自動丸め）
+- `RANGE_G` 加速度レンジ（2/4/8/16 g、デフォルト ±8 g）
+- `GYRO_RANGE_DPS` ジャイロレンジ（250/500/1000/2000 dps、デフォルト 2000）
+- `DLPF_HZ` DLPF設定（off / 50 / 92Hz、デフォルト off）
+- `SERIAL_BAUD` シリアル速度（デフォルト 115200）
 
 シリアルプロトコル（抜粋）
+- 既定ボーレート: 115200 bps（PCツールは 1500000→115200 の順で自動判別）
 - `PING` → `PONG`\n
 - `INFO` → 1行JSON（ODR/レンジ/ファイルサイズ/FS使用率など）
 - `HEAD` → 先頭64バイトのヘッダを16進で表示
@@ -88,6 +92,8 @@ IMUドライバ方針（IMU別）
 ペイロード（MSB first の int16 配列）
 - v1: `[ax][ay][az]` の繰り返し
 - v2+: `[ax][ay][az][gx][gy][gz]` の繰り返し
+
+スケーリングはヘッダの `lsb_per_g` / `lsb_per_dps`（0x0201）を最優先し、無い場合はレンジ値から従来の換算係数へフォールバック（0x0200）。
 
 CSV列
 - v1: `n, t_sec, ax_g, ay_g, az_g`
@@ -164,7 +170,7 @@ pyinstaller --onefile pc_tools/accdump_cli.py
 注意事項
 ------
 
-- 新ファーム（format 0x0200）はジャイロを追加。decoder は v1 と後方互換
+- 新ファーム（format 0x0200/0x0201）はジャイロを追加。0x0201 をデフォルト書き込みし、IMUメタ/スケールをヘッダに保持。decoder は v1 と後方互換
 - ファームは MSB first で int16 を書き込み、decoder は big-endian として解釈します
 
 
@@ -187,12 +193,13 @@ Features
 - Configurable ODR/ranges in `config.h`
 - Robust serial dump (handles preambles/timing)
 - Decoder auto‑detects format (v1 accel‑only, v2 accel+gyro)
+- Default runtime settings: ODR 200 Hz / accel ±8 g / gyro ±2000 dps / DLPF off / 115200 bps; header 0x0201 stores scaling metadata.
 
 Hardware
 --------
 
 - Devices with SH200Q (e.g., StickC/Plus/Plus2 SH200Q models) — register-level driver
-- Devices with other IMUs (e.g., Core2 with MPU6886, future non-SH200Q Stick variants) — M5Unified
+- Devices with other IMUs (e.g., Core2 / StickC Plus2 with MPU6886, future non-SH200Q Stick variants) — M5Unified
 
 Driver Rationale
 ----------------
@@ -215,13 +222,20 @@ Firmware
 2. Select your M5Stick board, set the partition scheme, build and upload.
 3. Recording: Button A toggles logging; `/ACCLOG.BIN` is created.
 
+Partition scheme recommendations:
+- StickC Plus2 (8MB): `tools/partitions_plus2_8mb.csv` (APP ~1.5MB / LittleFS ~5.5MB)
+- Core2 (16MB): `tools/partitions_core2_16mb.csv` (APP ~2MB / LittleFS ~13MB)
+- Fallback when the above are unavailable: `No OTA (1MB APP/3MB SPIFFS)`
+
 Configuration (`config.h`):
-- `ODR_HZ` sampling rate (e.g., 128 Hz; rounded to nearest supported by SH200Q)
-- `RANGE_G` accelerometer full scale (2/4/8/16 g)
-- `GYRO_RANGE_DPS` gyroscope full scale (250/500/1000/2000 dps, default 2000)
-- `SERIAL_BAUD` serial speed (115200 default)
+- `ODR_HZ` sampling rate (default 200 Hz; rounded to nearest supported by the device)
+- `RANGE_G` accelerometer full scale (2/4/8/16 g; default ±8 g)
+- `GYRO_RANGE_DPS` gyroscope full scale (250/500/1000/2000 dps; default 2000)
+- `DLPF_HZ` low-pass filter (off / 50 / 92Hz; default off)
+- `SERIAL_BAUD` serial speed (default 115200)
 
 Serial Protocol
+- Default baud: 115200 bps (tools auto-probe 1500000 → 115200).
 - `PING` → `PONG`\n
 - `INFO` → JSON line (ODR/ranges/file size/FS usage, etc.)
 - `HEAD` → dump first 64-byte header as hex
@@ -232,11 +246,13 @@ Serial Protocol
 Data Format
 -----------
 
-Header (64 bytes, little‑endian): magic `ACCLOG\0\0` (v1 may be `ACCLOG\0`), version, UID, start time, ODR, ranges, totals, reserved.
+Header (64 bytes, little‑endian): magic `ACCLOG\0\0` (v1 may be `ACCLOG\0`), version, UID, start time, ODR, accel range, gyro range (v2+), totals. Format 0x0201 adds `imu_type/device_model/lsb_per_g/lsb_per_dps`; remaining bytes are zero‑filled.
 
 Payload (int16, MSB first):
 - v1: `[ax][ay][az]`
 - v2+: `[ax][ay][az][gx][gy][gz]`
+
+Scaling: if `lsb_per_g` / `lsb_per_dps` are present (format 0x0201), they are used; otherwise the decoder falls back to range-based scaling (0x0200) or legacy defaults.
 
 CSV Columns:
 - v1: `n, t_sec, ax_g, ay_g, az_g`

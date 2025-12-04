@@ -4,13 +4,13 @@
 - 既存 M5Stick 系 IMU ロガー（FW v2＋PCツール）を M5StickC Plus2 でも同等機能（加速度＋ジャイロ記録、BIN/CSVダンプ、簡易UI）で動作させる。
 
 ## ボード判定
-- Arduino ボードマクロで自動判別する（例: `ARDUINO_M5Stick_Plus2` / `M5STICK_C_PLUS2` → Plus2 HAL、`ARDUINO_M5STACK_Core2` → Core2 HAL、`ARDUINO_M5Stick_C` → StickC HAL、それ以外はビルドエラー）。
+- Arduino ボードマクロで自動判別する。マクロ名は `agents/arduinoide_board.md` を参照し、該当しない場合はビルドエラー。
 
 ## ファームウェア作業
 - ボードHAL: `board_hal.h` 相当で `M5StickC.h` / `M5Core2.h` / Plus2 用ヘッダの切替、ボタン/タッチ入力、LCD・バックライト・電源レール制御を抽象化。
 - IMU方針分岐: Plus2 は MPU6886 を前提とし、M5Unified 公式ライブラリ経由で実装。SH200Q 搭載ボードは従来どおりレジスタ直叩き（生int16読み、ODR/レンジ直接設定）。IMU未確定時はビルド時に明示選択またはエラー。
-- ヘッダ/バージョン: 新フォーマット 0x0201 を流用し、`imu_type` / `lsb_per_g` / `lsb_per_dps` / `device_model` を格納。64バイト固定を維持しつつ 0x0200 と後方互換（デコーダは両対応）。
-- UI/操作: 入力を変数化し、StickC 系と同挙動（短押し=画面ウェイク、長押し=録画開始/停止、長押しでジャイロキャリブ）。画面サイズ・回転・バックライト処理を調整し、自動画面OFF動作を維持。未記録状態が10分継続し、かつ記録中/DUMP中でない場合は自動電源OFFする挙動を追加。
+- ヘッダ/バージョン: 新フォーマット 0x0201 をデフォルト採用し、`imu_type` / `lsb_per_g` / `lsb_per_dps` / `device_model` を格納。64バイト固定を維持しつつ 0x0200 と後方互換（デコーダは両対応）。
+- UI/操作: 入力を変数化し、StickC 系と同挙動（短押し=画面ウェイク、長押し=録画開始/停止、長押しでジャイロキャリブ）。画面サイズ・回転・バックライト処理を調整し、自動画面OFF動作を維持。未記録状態が10分継続し、かつ記録中/DUMP中でない場合は自動電源OFFする挙動を追加（Plus2含む全ボードで共通）。
 - 設定: デフォルト値は既存 StickC/Core2 と共通を採用（ODR/レンジ/DLPF/シリアルボーレート）。ビルド時のボード選択マクロ自動判別を前提にし、Plus2向けパーティションは 8MB 前提で別CSVを用意。
 
 ## Plus2 デフォルト（既存共通設定）
@@ -32,8 +32,8 @@
 
 ## PCツール
 - デコーダ: ヘッダにIMU種/LSBがあればそれを優先し、0x0200 は従来スケーリングでフォールバック。
-- INFO/DUMP: Board/IMU/ODR/レンジ/FS/ヘッダ種別をログに露出しつつ後方互換を維持（既存表示を踏襲）。
-- ドキュメント: `README_AccDump` に Plus2 注意点や必要ならスクリーンショットを追記。
+- INFO/DUMP: Board/IMU/ODR/レンジ/FS/ヘッダ種別/lsb_per_* をログに露出しつつ後方互換を維持（JP/EN混在可、既存表示を踏襲）。
+- ドキュメント: `README_AccDump` に Plus2 注意点を簡潔に追記。
 - GUI/CLI表示構成: 既存の Core2/StickC と同じフォーマットを踏襲（Board/IMU/ODR/Accel/Gyro/FS/Format/UID/Offset など）。
 
 ## INFO拡張
@@ -49,6 +49,7 @@
 ## パーティションCSV
 - 推奨: `tools/partitions_plus2_8mb.csv`（例: app0=1.5MB, littlefs=5.5MB, nvs/phy等は最小構成）を同梱。
 - フォールバック: IDE既定の「No OTA (1MB APP / 3MB SPIFFS)」を README に記載。
+- Core2向け: `tools/partitions_core2_16mb.csv` を併記。
 
 ## キャリブレーション方針（Stick系踏襲）
 - 起動後は未キャリブ状態で開始し、BtnA の長押し（Plus2でも同位置の物理ボタン）でジャイロ静止キャリブを実行（数百サンプル平均）。
@@ -61,7 +62,7 @@
 - 既存ユーザ向け移行メモ（新ヘッダを使わない限り追加作業不要である旨）。
 
 ## テスト/検証
-- Plus2 へビルド/書き込みし、INFO/REGS/DUMP を確認。ヘッダ内容と CSV スケーリングが実機挙動と一致することをチェック。
+- Plus2/Core2/StickC の INFO/REGS/DUMP/CSV スケーリングと自動電源OFF挙動を実機確認（ユーザー側で実施）。
 - 退行確認: M5StickC 系のビルドが通り、デコーダが混在ログを処理できること。
 
 ## 成果物
