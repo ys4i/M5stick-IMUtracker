@@ -1,4 +1,4 @@
-// Build Marker: 2025-12-02 16:02:00 (Local, Last Updated)
+// Build Marker: 2025-12-04 19:35:45 (Local, Last Updated)
 // Note: Update this timestamp whenever agents modifies this file.
 
 #include <LittleFS.h>
@@ -29,7 +29,13 @@ static bool dbg_has_sample = false;
 // forward declaration for serial protocol
 void start_logging();
 void stop_logging();
-#include "serial_proto.h"
+// Runtime IMU config (actual values after rounding)
+static uint16_t active_odr_hz = ODR_HZ;
+static uint16_t active_range_g = RANGE_G;
+static uint16_t active_gyro_dps = GYRO_RANGE_DPS;
+static uint16_t active_dlpf_hz = DLPF_HZ;
+static float active_lsb_per_g = 32768.0f / (float)RANGE_G;
+static float active_lsb_per_dps = 32768.0f / (float)GYRO_RANGE_DPS;
 
 // Ensure exact 64-byte layout without padding
 struct __attribute__((packed)) LogHeader {
@@ -50,6 +56,8 @@ struct __attribute__((packed)) LogHeader {
     uint32_t dropped_samples;
     uint8_t reserved[64 - 8 - 2 - 8 - 8 - 2 - 2 - 2 - 2 - 2 - 4 - 4 - 4 - 4];
 };
+
+#include "serial_proto.h"
 
 void lcd_draw_debug_overlay(uint16_t bg) {
     if (!DEBUG_MODE) return;
@@ -144,8 +152,8 @@ void lcd_draw_fs_usage() {
     hal_lcd().fillRect(0, text2_y - 2, hal_lcd().width(), th2 + 4, bg);
     hal_lcd().setCursor(0, text2_y);
     hal_lcd().setTextColor(fg, bg);
-    // Data rate: 6 channels * int16 = 12 bytes per sample at ODR_HZ
-    const float bytes_per_sec = 12.0f * (float)ODR_HZ;
+    // Data rate: 6 channels * int16 = 12 bytes per sample at active ODR
+    const float bytes_per_sec = 12.0f * (float)active_odr_hz;
     float eta_sec = 0.0f;
     if (bytes_per_sec > 0.0f) {
         eta_sec = (float)fs_free_bytes() / bytes_per_sec;
@@ -153,12 +161,12 @@ void lcd_draw_fs_usage() {
     // Compact human-readable ETA
     if (eta_sec >= 3600.0f) {
         float hrs = eta_sec / 3600.0f;
-        hal_lcd().printf("ODR:%uHz ETA: %.1fhour", (unsigned)ODR_HZ, hrs);
+        hal_lcd().printf("ODR:%uHz ETA: %.1fhour", (unsigned)active_odr_hz, hrs);
     } else if (eta_sec >= 60.0f) {
         float mins = eta_sec / 60.0f;
-        hal_lcd().printf("ODR:%uHz ETA: %.1fmin", (unsigned)ODR_HZ, mins);
+        hal_lcd().printf("ODR:%uHz ETA: %.1fmin", (unsigned)active_odr_hz, mins);
     } else {
-        hal_lcd().printf("ODR:%uHz ETA: %usec", (unsigned)ODR_HZ, (unsigned)eta_sec);
+        hal_lcd().printf("ODR:%uHz ETA: %usec", (unsigned)active_odr_hz, (unsigned)eta_sec);
     }
 
     // Draw usage bar background and fill
@@ -205,13 +213,13 @@ void start_logging() {
     hdr.device_uid = ESP.getEfuseMac();
     // Use device monotonic millis at start for later PC-side alignment
     hdr.start_unix_ms = millis();
-    hdr.odr_hz = ODR_HZ;
-    hdr.range_g = RANGE_G;
-    hdr.gyro_range_dps = GYRO_RANGE_DPS;
+    hdr.odr_hz = active_odr_hz;
+    hdr.range_g = active_range_g;
+    hdr.gyro_range_dps = active_gyro_dps;
     hdr.imu_type = HAL_IMU_TYPE;
     hdr.device_model = HAL_DEVICE_MODEL;
-    hdr.lsb_per_g = (float)(32768.0f / (float)RANGE_G);
-    hdr.lsb_per_dps = (float)(32768.0f / (float)GYRO_RANGE_DPS);
+    hdr.lsb_per_g = active_lsb_per_g;
+    hdr.lsb_per_dps = active_lsb_per_dps;
     hdr.total_samples = 0xFFFFFFFF;
     hdr.dropped_samples = 0;
     logFile.seek(0);
@@ -293,7 +301,13 @@ void setup() {
         hal_i2c_sda_pin(), hal_i2c_scl_pin()
     );
     bool imu_ok = imu_init();
-    Serial.printf("IMU_INIT %d\n", (int)imu_ok);
+    active_odr_hz = imu_active_odr_hz() ? imu_active_odr_hz() : ODR_HZ;
+    active_range_g = imu_active_range_g() ? imu_active_range_g() : RANGE_G;
+    active_gyro_dps = imu_active_gyro_range_dps() ? imu_active_gyro_range_dps() : GYRO_RANGE_DPS;
+    active_dlpf_hz = imu_active_dlpf_hz();
+    active_lsb_per_g = imu_lsb_per_g();
+    active_lsb_per_dps = imu_lsb_per_dps();
+    Serial.printf("IMU_INIT %d odr:%uHz acc:%ug gyro:%udps dlpf:%uHz\n", (int)imu_ok, (unsigned)active_odr_hz, (unsigned)active_range_g, (unsigned)active_gyro_dps, (unsigned)active_dlpf_hz);
     lcd_show_state();
     screen_on = true;
     screen_on_until_ms = millis() + 5000; // initial wake period
@@ -360,7 +374,8 @@ void loop() {
 
     static uint32_t last_us = micros();
     uint32_t now = micros();
-    if (now - last_us < (1000000UL / ODR_HZ)) {
+    const uint32_t interval_us = 1000000UL / (active_odr_hz ? active_odr_hz : 1);
+    if (now - last_us < interval_us) {
         // Update LCD FS usage at ~1 Hz while recording as well
         static uint32_t last_lcd_ms_rec = 0;
         uint32_t now_ms = millis();
@@ -374,7 +389,7 @@ void loop() {
         }
         return;
     }
-    last_us += 1000000UL / ODR_HZ;
+    last_us += interval_us;
 
     int16_t ax, ay, az, gx, gy, gz;
     if (!imu_read_accel_raw(ax, ay, az)) return;

@@ -70,24 +70,49 @@ inline void serial_proto_poll() {
         Serial.println("PONG");
     } else if (cmd == "INFO") {
         size_t size = 0;
-        bool has_head = false;
+        bool header_found = false;
+        int header_offset = -1;
+        uint16_t fmt_ver = 0;
+        uint16_t file_odr = 0;
+        uint16_t file_range = 0;
+        uint16_t file_gyro = 0;
+        float file_lsb_g = 0.0f;
+        float file_lsb_dps = 0.0f;
         uint64_t uid = ESP.getEfuseMac();
         if (LittleFS.exists(LOG_FILE_NAME)) {
             File f = LittleFS.open(LOG_FILE_NAME, "r");
             size = f.size();
             // Check magic
-            uint8_t m[8] = {0};
-            if (f.read(m, 8) == 8) {
-                has_head = (m[0]=='A' && m[1]=='C' && m[2]=='C' && m[3]=='L' && m[4]=='O' && m[5]=='G');
+            LogHeader hdr = {};
+            if (f.read(reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr)) {
+                if (hdr.magic[0]=='A' && hdr.magic[1]=='C' && hdr.magic[2]=='C' && hdr.magic[3]=='L' && hdr.magic[4]=='O' && hdr.magic[5]=='G') {
+                    header_found = true;
+                    header_offset = 0;
+                    fmt_ver = hdr.format_ver;
+                    file_odr = hdr.odr_hz;
+                    file_range = hdr.range_g;
+                    file_gyro = hdr.gyro_range_dps;
+                    file_lsb_g = hdr.lsb_per_g;
+                    file_lsb_dps = hdr.lsb_per_dps;
+                }
             }
             f.close();
         }
+        // Use runtime values when header lacks LSB or format
+        const uint16_t info_odr = file_odr ? file_odr : active_odr_hz;
+        const uint16_t info_range = file_range ? file_range : active_range_g;
+        const uint16_t info_gyro = file_gyro ? file_gyro : active_gyro_dps;
+        const float info_lsb_g = (file_lsb_g > 0.0f) ? file_lsb_g : active_lsb_per_g;
+        const float info_lsb_dps = (file_lsb_dps > 0.0f) ? file_lsb_dps : active_lsb_per_dps;
+        const char* fmt_str = fmt_ver ? (fmt_ver == 0x0201 ? "0x0201" : (fmt_ver == 0x0200 ? "0x0200" : "unknown")) : "0x0201";
         Serial.printf(
-            "{\"uid\":\"0x%016llX\",\"odr\":%u,\"range_g\":%u,\"gyro_dps\":%u,\"imu_type\":%u,\"device_model\":%u,\"format\":\"0x0201\",\"lsb_per_g\":%.3f,\"lsb_per_dps\":%.3f,\"file_size\":%u,\"fs_total\":%u,\"fs_used\":%u,\"fs_free\":%u,\"fs_used_pct\":%u,\"has_head\":%u}\n",
-            (unsigned long long)uid, ODR_HZ, RANGE_G, GYRO_RANGE_DPS, (unsigned)HAL_IMU_TYPE, (unsigned)HAL_DEVICE_MODEL,
-            (float)(32768.0f / (float)RANGE_G), (float)(32768.0f / (float)GYRO_RANGE_DPS),
+            "{\"uid\":\"0x%016llX\",\"board\":\"%s\",\"imu\":\"%s\",\"odr\":%u,\"range_g\":%u,\"gyro_dps\":%u,\"dlpf_hz\":%u,\"imu_type\":%u,\"device_model\":%u,\"format\":\"%s\",\"lsb_per_g\":%.3f,\"lsb_per_dps\":%.3f,\"file_size\":%u,\"fs_total\":%u,\"fs_used\":%u,\"fs_free\":%u,\"fs_used_pct\":%u,\"header_found\":%u,\"header_offset\":%d}\n",
+            (unsigned long long)uid, hal_board_key(), hal_imu_key(),
+            (unsigned)info_odr, (unsigned)info_range, (unsigned)info_gyro, (unsigned)active_dlpf_hz,
+            (unsigned)HAL_IMU_TYPE, (unsigned)HAL_DEVICE_MODEL, fmt_str,
+            (float)info_lsb_g, (float)info_lsb_dps,
             (unsigned)size, (unsigned)fs_total_bytes(), (unsigned)fs_used_bytes(), (unsigned)fs_free_bytes(), (unsigned)fs_used_pct(),
-            (unsigned)has_head
+            (unsigned)header_found, header_offset
         );
     } else if (cmd == "HEAD") {
         if (LittleFS.exists(LOG_FILE_NAME)) {

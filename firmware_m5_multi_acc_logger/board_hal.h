@@ -29,32 +29,57 @@
 #define DEVICE_MODEL_CORE2_UNKNOWN 11
 
 // --- ボード/IMU検出 ---
+// 判定マクロは agents/arduinoide_board.md のルール（build.board に ARDUINO_ を付与）を参照。
+#if defined(ARDUINO_M5Stick_C) || defined(ARDUINO_M5Stick_C_PLUS) || defined(ARDUINO_M5STACK_STICKC)
+#  define HAL_BOARD_IS_STICKC 1
+#else
+#  define HAL_BOARD_IS_STICKC 0
+#endif
+
+#if defined(ARDUINO_M5STACK_STICKC_PLUS2) || defined(ARDUINO_M5Stick_C_PLUS2) || defined(ARDUINO_M5Stick_Plus2)
+#  define HAL_BOARD_IS_PLUS2 1
+#else
+#  define HAL_BOARD_IS_PLUS2 0
+#endif
+
+#if defined(ARDUINO_M5STACK_CORE2) || defined(ARDUINO_M5STACK_Core2) || defined(M5STACK_CORE2) || defined(M5STACK_M5Core2)
+#  define HAL_BOARD_IS_CORE2 1
+#else
+#  define HAL_BOARD_IS_CORE2 0
+#endif
+
 #if defined(IMU_FORCE_SH200Q)
 #  define HAL_IMU_IS_SH200Q 1
-#elif defined(ARDUINO_M5Stick_C) || defined(ARDUINO_M5Stick_C_PLUS) || defined(ARDUINO_M5Stick_C_PLUS2)
+#elif HAL_BOARD_IS_STICKC
 #  define HAL_IMU_IS_SH200Q 1
-#else
+#elif HAL_BOARD_IS_PLUS2 || HAL_BOARD_IS_CORE2
 #  define HAL_IMU_IS_SH200Q 0
+#else
+#  error "Unsupported board: define IMU_FORCE_SH200Q or use a supported M5Stick/Core2 board macro"
 #endif
 
 #if HAL_IMU_IS_SH200Q
   #include <M5StickC.h>
   #define HAL_IMU_TYPE IMU_TYPE_SH200Q
   // Board推定（わからなければUNKNOWN）
-  #if defined(ARDUINO_M5Stick_C_PLUS2)
-    #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC_PLUS2
-  #elif defined(ARDUINO_M5Stick_C_PLUS)
-    #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC_PLUS
-  #elif defined(ARDUINO_M5Stick_C)
-    #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC
+  #if HAL_BOARD_IS_STICKC
+    #if defined(ARDUINO_M5Stick_C_PLUS)
+      #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC_PLUS
+    #elif defined(ARDUINO_M5Stick_C)
+      #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC
+    #else
+      #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC
+    #endif
   #else
     #define HAL_DEVICE_MODEL DEVICE_MODEL_UNKNOWN
   #endif
 #else
   #include <M5Unified.h>
   #define HAL_IMU_TYPE IMU_TYPE_MPU6886
-  // Core2 を既定とし、それ以外は UNKNOWN
-  #if defined(ARDUINO_M5STACK_Core2) || defined(M5STACK_CORE2) || defined(M5STACK_M5Core2)
+  // Plus2/Core2 を識別、その他は UNKNOWN
+  #if HAL_BOARD_IS_PLUS2
+    #define HAL_DEVICE_MODEL DEVICE_MODEL_STICKC_PLUS2
+  #elif HAL_BOARD_IS_CORE2
     #define HAL_DEVICE_MODEL DEVICE_MODEL_CORE2_16MB
   #else
     #define HAL_DEVICE_MODEL DEVICE_MODEL_CORE2_UNKNOWN
@@ -66,8 +91,9 @@
 // --- 画面/電源制御 ---
 inline void hal_screen_on(uint8_t brightness_active, uint8_t brightness_off) {
 #if HAL_IMU_IS_SH200Q
+    uint8_t axp_b = brightness_active > 12 ? 12 : brightness_active;
     M5.Axp.SetLDO2(true);
-    M5.Axp.ScreenBreath(brightness_active);
+    M5.Axp.ScreenBreath(axp_b);
 #else
     M5.Display.setBrightness(brightness_active);
 #endif
@@ -76,7 +102,8 @@ inline void hal_screen_on(uint8_t brightness_active, uint8_t brightness_off) {
 
 inline void hal_screen_off(uint8_t brightness_off) {
 #if HAL_IMU_IS_SH200Q
-    M5.Axp.ScreenBreath(brightness_off);
+    uint8_t axp_b = brightness_off > 12 ? 12 : brightness_off;
+    M5.Axp.ScreenBreath(axp_b);
     M5.Axp.SetLDO2(false);
 #else
     M5.Display.setBrightness(brightness_off);
@@ -96,9 +123,10 @@ inline void hal_power_off() {
 inline void hal_begin() {
 #if HAL_IMU_IS_SH200Q
     M5.begin();
+    M5.Lcd.setRotation(LCD_ROTATION);
 #else
     M5.begin();
-    M5.Display.setRotation(3);
+    M5.Display.setRotation(LCD_ROTATION);
 #endif
 }
 
@@ -110,48 +138,65 @@ static uint32_t s_touch_last_dur = 0;
 static bool s_touch_released = false;
 #endif
 
+// Compatibility helper: wasReleaseFor (new) vs wasReleasefor (old)
+inline bool hal_btnA_wasReleaseFor(uint32_t ms) {
+#if HAS_M5UNIFIED
+    return M5.BtnA.wasReleaseFor(ms);
+#else
+    return M5.BtnA.wasReleasefor(ms);
+#endif
+}
+
 inline void hal_update() {
     M5.update();
 #if !HAL_IMU_IS_SH200Q
-    uint32_t now = millis();
-    M5.Touch.update(now);
-    bool pressed = M5.Touch.getDetail().isPressed();
-    if (pressed && !s_touch_prev) {
-        s_touch_down_ms = now;
-        s_touch_released = false;
-    } else if (!pressed && s_touch_prev) {
-        // released
-        s_touch_last_dur = now - s_touch_down_ms;
-        s_touch_released = true;
+    if (HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_16MB || HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_UNKNOWN) {
+        uint32_t now = millis();
+        M5.Touch.update(now);
+        bool pressed = M5.Touch.getDetail().isPressed();
+        if (pressed && !s_touch_prev) {
+            s_touch_down_ms = now;
+            s_touch_released = false;
+        } else if (!pressed && s_touch_prev) {
+            // released
+            s_touch_last_dur = now - s_touch_down_ms;
+            s_touch_released = true;
+        }
+        s_touch_prev = pressed;
     }
-    s_touch_prev = pressed;
 #endif
 }
 
 // --- 入力 ---
 inline bool hal_btn_long(uint32_t ms) {
-    // SH200Q系は物理BtnA
+    // StickC/Plus/Plus2: 物理BtnA, Core2: タッチ長押し
 #if HAL_IMU_IS_SH200Q
-    return M5.BtnA.wasReleasefor(ms);
+    return hal_btnA_wasReleaseFor(ms);
 #else
-    if (s_touch_released && s_touch_last_dur >= ms) {
-        s_touch_released = false;
-        return true;
+    if (HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_16MB || HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_UNKNOWN) {
+        if (s_touch_released && s_touch_last_dur >= ms) {
+            s_touch_released = false;
+            return true;
+        }
+        return false;
     }
-    return false;
+    return hal_btnA_wasReleaseFor(ms);
 #endif
 }
 
 inline bool hal_btn_short_released() {
-    // SH200Q系は物理BtnA
+    // StickC/Plus/Plus2: 物理BtnA, Core2: タッチ短押し
 #if HAL_IMU_IS_SH200Q
     return M5.BtnA.wasReleased();
 #else
-    if (s_touch_released && s_touch_last_dur < 800 /* default long threshold */) {
-        s_touch_released = false;
-        return true;
+    if (HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_16MB || HAL_DEVICE_MODEL == DEVICE_MODEL_CORE2_UNKNOWN) {
+        if (s_touch_released && s_touch_last_dur < 800 /* default long threshold */) {
+            s_touch_released = false;
+            return true;
+        }
+        return false;
     }
-    return false;
+    return M5.BtnA.wasReleased();
 #endif
 }
 
@@ -197,4 +242,24 @@ inline const char* hal_i2c_bus_name() {
 #else
     return "In_I2C";
 #endif
+}
+
+// Compatibility helper: wasReleaseFor (new) vs wasReleasefor (old)
+// --- Board/IMU name helpers ---
+inline const char* hal_board_key() {
+    switch (HAL_DEVICE_MODEL) {
+        case DEVICE_MODEL_STICKC: return "stickc";
+        case DEVICE_MODEL_STICKC_PLUS: return "stickc_plus";
+        case DEVICE_MODEL_STICKC_PLUS2: return "plus2";
+        case DEVICE_MODEL_CORE2_16MB: return "core2";
+        default: return "unknown";
+    }
+}
+
+inline const char* hal_imu_key() {
+    switch (HAL_IMU_TYPE) {
+        case IMU_TYPE_SH200Q: return "sh200q";
+        case IMU_TYPE_MPU6886: return "mpu6886";
+        default: return "unknown";
+    }
 }

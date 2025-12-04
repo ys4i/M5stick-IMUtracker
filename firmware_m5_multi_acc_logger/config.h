@@ -2,15 +2,17 @@
 
 // Configuration constants for logging
 
-// Output data rate in Hz.
-// SH200Q側の実機設定は離散値のみ対応のため、最も近い値に丸めて設定します。
-// 目安: Accel ODR = {8,16,32,64,128,256,512,1024} Hz, Gyro ODR = {64,128,256,500,1000} Hz
-// 推奨: 128Hz（Accel=128Hz, Gyro≈128Hzに設定されます）
-constexpr uint16_t ODR_HZ = 128;
-// Accelerometer range in g (2,4,8,16)
+// Output data rate in Hz (rounded to nearest supported value per IMU).
+// SH200Q accel ODR set from {8,16,32,64,128,256,512,1024} Hz (nearest).
+// MPU6886 ODR derived from SMPLRT_DIV (base 1kHz with DLPF on / 8kHz off).
+constexpr uint16_t ODR_HZ = 200;
+// Accelerometer range in g (2,4,8,16). Rounded to nearest supported.
 constexpr uint16_t RANGE_G = 8;
-// Gyroscope range in dps (250, 500, 1000, 2000)
+// Gyroscope range in dps (250, 500, 1000, 2000). Rounded to nearest supported.
 constexpr uint16_t GYRO_RANGE_DPS = 2000;
+// DLPF setting in Hz. Use 0 to disable (default). Otherwise best-effort mapping
+// to nearest supported value (e.g., 50 -> ~44Hz, 92 -> ~94Hz on MPU6886).
+constexpr uint16_t DLPF_HZ = 0;
 // Log file name stored in LittleFS
 constexpr const char* LOG_FILE_NAME = "/ACCLOG.BIN";
 // Enable on-device debug overlay (IMU/I2C info) on LCD
@@ -18,7 +20,7 @@ constexpr bool DEBUG_MODE = false;
 // Interval for Serial debug printing of raw IMU data when DEBUG_MODE is true (milliseconds)
 constexpr uint32_t DEBUG_RAW_PRINT_INTERVAL_MS = 200;
 // Serial baud rate for communication
-// High-speed for faster dump. Stable values on ESP32/CP210x: 921600 or 1500000.
+// Default 115200 (PCツールは高速→低速の順で自動プローブ)
 constexpr unsigned long SERIAL_BAUD = 115200;
 
 // Calibration behavior
@@ -29,6 +31,8 @@ constexpr uint8_t CALIB_DELAY_SEC = 2;
 constexpr float LSB_PER_G = 8192.0f;
 // For CSV scaling we assume symmetric mapping: LSB_PER_DPS = 32768 / range_dps
 
-// LCD backlight brightness (M5StickC AXP192 ScreenBreath 0..12)
+// LCD backlight brightness (0..100)
 constexpr uint8_t LCD_BRIGHT_ACTIVE = 100;  // brightness when screen is on
-constexpr uint8_t LCD_BRIGHT_OFF    = 0;   // brightness when screen is off
+constexpr uint8_t LCD_BRIGHT_OFF    = 0;    // brightness when screen is off
+// LCD rotation (0=default). "画面回転なし"の方針で 0 を既定にする。
+constexpr uint8_t LCD_ROTATION = 0;

@@ -10,6 +10,14 @@
 
 static const uint8_t MPU6886_ADDR = hal_imu_addr();
 
+// Runtime configuration (actual values after rounding to supported settings)
+static uint16_t s_odr_hz = ODR_HZ;
+static uint16_t s_acc_range_g = RANGE_G;
+static uint16_t s_gyro_range_dps = GYRO_RANGE_DPS;
+static uint16_t s_dlpf_hz = DLPF_HZ;
+static float s_lsb_per_g = 32768.0f / (float)RANGE_G;
+static float s_lsb_per_dps = 32768.0f / (float)GYRO_RANGE_DPS;
+
 // Registers
 #define MPU6886_REG_PWR_MGMT_1   0x6B
 #define MPU6886_REG_SMPLRT_DIV   0x19
@@ -59,11 +67,29 @@ inline uint8_t map_acc_range_mpu(uint16_t g) {
     return 0x00;             // +/-2g
 }
 
+inline uint16_t decode_acc_range_mpu(uint8_t cfg) {
+    switch (cfg & 0x18) {
+        case 0x18: return 16;
+        case 0x10: return 8;
+        case 0x08: return 4;
+        default: return 2;
+    }
+}
+
 inline uint8_t map_gyro_range_mpu(uint16_t dps) {
     if (dps >= 2000) return 0x18; // +/-2000 dps
     if (dps >= 1000) return 0x10; // +/-1000 dps
     if (dps >= 500)  return 0x08; // +/-500 dps
     return 0x00;                 // +/-250 dps
+}
+
+inline uint16_t decode_gyro_range_mpu(uint8_t cfg) {
+    switch (cfg & 0x18) {
+        case 0x18: return 2000;
+        case 0x10: return 1000;
+        case 0x08: return 500;
+        default: return 250;
+    }
 }
 
 inline uint8_t map_dlpf_cfg(uint16_t hz) {
@@ -78,13 +104,28 @@ inline uint8_t map_dlpf_cfg(uint16_t hz) {
     return 0; // off/260Hz
 }
 
+inline uint16_t dlpf_actual_hz(uint8_t cfg) {
+    switch (cfg & 0x07) {
+        case 1: return 184;
+        case 2: return 94;
+        case 3: return 44;
+        case 4: return 21;
+        case 5: return 10;
+        case 6: return 5;
+        default: return 0; // off / 260Hz nominal (treated as off)
+    }
+}
+
 inline void mpu_set_odr(uint16_t odr_hz, bool dlpf_off) {
     // Gyro output rate: 8kHz when DLPF off, 1kHz when on.
     uint16_t base = dlpf_off ? 8000 : 1000;
     if (odr_hz == 0) odr_hz = 200;
-    uint16_t div = (odr_hz >= base) ? 0 : (uint16_t)((base / odr_hz) - 1);
+    // Round to nearest by adding half before integer divide
+    uint16_t div = (uint16_t)(((base + (odr_hz / 2)) / odr_hz) - 1);
     if (div > 255) div = 255;
     mpu_write_u8(MPU6886_REG_SMPLRT_DIV, (uint8_t)div);
+    // Store actual ODR
+    s_odr_hz = (uint16_t)(base / (div + 1));
 }
 
 inline bool imu_init() {
@@ -106,13 +147,22 @@ inline bool imu_init() {
     delay(10);
     mpu_write_u8(MPU6886_REG_PWR_MGMT_2, 0x00); // enable all axes
     delay(1);
-    uint8_t dlpf = map_dlpf_cfg(0); // default off
+    uint8_t dlpf = map_dlpf_cfg(DLPF_HZ);
+    s_dlpf_hz = dlpf_actual_hz(dlpf);
     bool dlpf_off = (dlpf == 0);
     mpu_write_u8(MPU6886_REG_CONFIG, dlpf);
     mpu_set_odr(ODR_HZ, dlpf_off);
-    mpu_write_u8(MPU6886_REG_GYRO_CONFIG, map_gyro_range_mpu(GYRO_RANGE_DPS));
-    mpu_write_u8(MPU6886_REG_ACCEL_CONFIG, map_acc_range_mpu(RANGE_G));
+
+    uint8_t gcfg = map_gyro_range_mpu(GYRO_RANGE_DPS);
+    uint8_t acfg = map_acc_range_mpu(RANGE_G);
+    mpu_write_u8(MPU6886_REG_GYRO_CONFIG, gcfg);
+    mpu_write_u8(MPU6886_REG_ACCEL_CONFIG, acfg);
     mpu_write_u8(MPU6886_REG_ACCEL_CONFIG2, dlpf);
+
+    s_acc_range_g = decode_acc_range_mpu(acfg);
+    s_gyro_range_dps = decode_gyro_range_mpu(gcfg);
+    s_lsb_per_g = 32768.0f / (float)s_acc_range_g;
+    s_lsb_per_dps = 32768.0f / (float)s_gyro_range_dps;
     return true;
 }
 
@@ -130,7 +180,7 @@ inline void imu_calibrate_once(uint16_t samples = 512) {
             continue;
         }
         sx += gx; sy += gy; sz += gz;
-        delay(1000UL / (ODR_HZ ? ODR_HZ : 200));
+        delay(1000UL / (s_odr_hz ? s_odr_hz : 200));
     }
     s_gbias_x = (int32_t)(sx / (int32_t)samples);
     s_gbias_y = (int32_t)(sy / (int32_t)samples);
@@ -152,3 +202,11 @@ inline bool imu_read_gyro_raw(int16_t& gx, int16_t& gy, int16_t& gz) {
     gz = (int16_t)(rz - s_gbias_z);
     return true;
 }
+
+// Expose actual configuration for header/INFO
+inline uint16_t imu_active_odr_hz() { return s_odr_hz; }
+inline uint16_t imu_active_range_g() { return s_acc_range_g; }
+inline uint16_t imu_active_gyro_range_dps() { return s_gyro_range_dps; }
+inline uint16_t imu_active_dlpf_hz() { return s_dlpf_hz; }
+inline float imu_lsb_per_g() { return s_lsb_per_g; }
+inline float imu_lsb_per_dps() { return s_lsb_per_dps; }

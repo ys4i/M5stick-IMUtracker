@@ -7,12 +7,10 @@ import json
 from info_format import enrich_info_defaults
 
 BAUDRATE = 115_200
-"""Default preferred baud rate for high-speed dump."""
+"""Default preferred baud rate (firmware default 115200)."""
 
 # Fallback candidates (fast -> slow). The code will auto-try these.
-# memo: M5stickの個体によっては115200しか動作せず、そのため115200に固定
-# CANDIDATE_BAUDRATES = [1_500_000, 921_600, 460_800, 230_400, 115_200]
-CANDIDATE_BAUDRATES = [115_200]
+CANDIDATE_BAUDRATES = [1_500_000, 921_600, 460_800, 230_400, 115_200]
 TIMEOUT = 15
 MAX_ATTEMPTS = 2
 HEADER_MAX_ATTEMPTS = 4096

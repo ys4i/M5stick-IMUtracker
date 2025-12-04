@@ -12,6 +12,18 @@ HEADER_PREFIX_SIZE = struct.calcsize(HEADER_PREFIX_FMT)
 HEADER_SIZE = 64
 HEADER_FMT = HEADER_FMT_V2  # use v2 format for unpacking; v1 compatible
 
+def _board_from_device_model(dm: int | None) -> str:
+    if dm == 1: return 'stickc'
+    if dm == 2: return 'stickc_plus'
+    if dm == 3: return 'plus2'
+    if dm in (10, 11): return 'core2'
+    return 'unknown'
+
+def _imu_from_type(it: int | None) -> str:
+    if it == 1: return 'sh200q'
+    if it == 2: return 'mpu6886'
+    return 'unknown'
+
 
 def parse_header(data: bytes) -> dict:
     if len(data) < HEADER_SIZE:
@@ -57,6 +69,8 @@ def parse_header(data: bytes) -> dict:
         'lsb_per_dps': lsb_per_dps,
         'total_samples': total_samples,
         'dropped_samples': dropped,
+        'board': _board_from_device_model(device_model),
+        'imu': _imu_from_type(imu_type),
     }
 
 
@@ -119,6 +133,7 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
             'header_found': False,
             'header_offset': -1,
         }
+        header['format'] = f"0x{int(header['format_ver']):04X}"
         payload = buf[off:]
     else:
         if len(buf) - idx < HEADER_SIZE:
@@ -126,6 +141,7 @@ def bin_to_csv(bin_path: Path, csv_path: Path | None = None):
         header = parse_header(buf[idx: idx + HEADER_SIZE])
         header['header_found'] = True
         header['header_offset'] = int(idx)
+        header.setdefault('format', f"0x{int(header.get('format_ver', 0)):04X}")
         payload = buf[idx + HEADER_SIZE:]
 
     # Ensure even number of bytes (int16-aligned); drop any trailing odd byte
