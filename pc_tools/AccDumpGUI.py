@@ -66,8 +66,22 @@ class AccDumpGUI(tk.Tk):
         thread.start()
 
     def _append_log(self, msg: str):
-        self.log.insert(tk.END, msg + '\n')
-        self.log.see(tk.END)
+        def _do():
+            self.log.insert(tk.END, msg + '\n')
+            self.log.see(tk.END)
+        if threading.current_thread() is threading.main_thread():
+            _do()
+        else:
+            self.after(0, _do)
+
+    def _update_progress(self, maximum: int, value: int):
+        def _do():
+            self.progress['maximum'] = maximum
+            self.progress['value'] = value
+        if threading.current_thread() is threading.main_thread():
+            _do()
+        else:
+            self.after(0, _do)
 
     def _is_busy_serial_error(self, exc: Exception) -> bool:
         msg = str(exc)
@@ -129,8 +143,7 @@ class AccDumpGUI(tk.Tk):
             self._append_log(f'DUMP開始: 出力先={out_file}')
             last_logged_pct = {'p': -1}
             def cb(read_bytes, total_bytes):
-                self.progress['maximum'] = total_bytes
-                self.progress['value'] = read_bytes
+                self._update_progress(total_bytes, read_bytes)
                 try:
                     pct = int(100 * read_bytes / total_bytes) if total_bytes else 0
                 except Exception:

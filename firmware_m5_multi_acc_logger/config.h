@@ -21,7 +21,7 @@ constexpr bool DEBUG_MODE = false;
 constexpr uint32_t DEBUG_RAW_PRINT_INTERVAL_MS = 200;
 // Serial baud rate for communication
 // Default 115200 (PCツールは高速→低速の順で自動プローブ)
-constexpr unsigned long SERIAL_BAUD = 115200;
+constexpr unsigned long SERIAL_BAUD = 1500000;
 
 // Calibration behavior
 // Delay after long-press before starting calibration (seconds)
